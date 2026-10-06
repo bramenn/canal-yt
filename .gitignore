@@ -1,0 +1,6 @@
+.work/
+.tools/
+projects/
+node_modules/
+.secrets/
+sounds/

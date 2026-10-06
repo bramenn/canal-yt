@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bramenn Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&family=Kalam:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#descubrir">BRAMENN<span class="dot">.</span><span class="pill">studio</span></a>
+    <nav class="tabs">
+      <a href="#descubrir" data-tab="descubrir"><i>01</i>Descubrir</a>
+      <a href="#estudio" data-tab="estudio"><i>02</i>Estudio</a>
+      <a href="#teleprompter" data-tab="teleprompter"><i>03</i>Teleprompter</a>
+      <a href="#miniatura" data-tab="miniatura"><i>04</i>Miniatura</a>
+      <a href="#estilo" data-tab="estilo"><i>05</i>Estilo</a>
+      <a href="#proyectos" data-tab="proyectos"><i>06</i>Proyectos</a>
+      <a href="#publicar" data-tab="publicar"><i>07</i>Publicar</a>
+    </nav>
+    <div class="status" id="status"><span class="led"></span><span id="status-text">Comprobando Claude Code…</span></div>
+  </header>
+
+  <main>
+    <!-- ============ 01 DESCUBRIR ============ -->
+    <section class="view" data-view="descubrir">
+      <div class="hero">
+        <p class="kicker">01 · Motor de temas · Claude Code + WebSearch</p>
+        <h1 class="mega" id="hero-title">ENCUENTRA EL PRÓXIMO <em>VÍDEO</em><b>.</b></h1>
+        <p class="lede">Claude Code investiga qué ha pasado esta semana en IA, busca la pregunta de dinero que la gente ya se hace y te propone temas con título, gancho, datos verificados y miniatura.</p>
+      </div>
+
+      <form class="card search" id="topic-form">
+        <label class="field grow">
+          <span>Nicho / temas que te interesan</span>
+          <textarea name="niche" rows="2">IA local, hardware para IA (GPU, Mac, RAM), modelos abiertos (Qwen, DeepSeek, Kimi, MiMo), costes reales frente a planes de Claude/ChatGPT, motores (llama.cpp, MLX, Ollama)</textarea>
+        </label>
+        <label class="field grow">
+          <span>Indicaciones extra (opcional)</span>
+          <input name="extra" placeholder="p. ej. algo que pueda probar con mi RTX 4070 de 12 GB" />
+        </label>
+        <div class="row">
+          <label class="field"><span>Cuántos</span>
+            <select name="count"><option>6</option><option selected>8</option><option>10</option><option>12</option></select>
+          </label>
+          <label class="field"><span>Modelo</span>
+            <select name="model"><option value="sonnet" selected>Sonnet (rápido)</option><option value="opus">Opus (más fino)</option></select>
+          </label>
+          <label class="field"><span>Español</span>
+            <select name="variant"><option value="es-ES">España (como el canal)</option><option value="es-LATAM">Latam neutro</option></select>
+          </label>
+          <button class="btn primary big" type="submit">Buscar temas <span class="arrow">→</span></button>
+        </div>
+      </form>
+
+      <form class="card own" id="own-form">
+        <span class="pill">¿Ya tienes un tema?</span>
+        <input name="title" placeholder="Escribe tu tema o título: ¿Cuánto costaría ejecutar Kimi K3 en local?" />
+        <button class="btn" type="submit">Escribir guion <span class="arrow">→</span></button>
+      </form>
+
+      <div class="topics" id="topics"></div>
+    </section>
+
+    <!-- ============ 02 ESTUDIO ============ -->
+    <section class="view" data-view="estudio">
+      <div class="empty" id="studio-empty">
+        <p class="kicker">02 · Estudio</p>
+        <h2 class="mega small">TODAVÍA NO HAY <em>GUION</em><b>.</b></h2>
+        <p class="lede">Genera uno desde <a href="#descubrir">Descubrir</a>, abre un proyecto o carga la demo para ver el motor de animación.</p>
+        <button class="btn primary" id="load-demo">Cargar demo</button>
+      </div>
+
+      <div class="studio" id="studio" hidden>
+        <div class="studio-bar">
+          <select id="title-select" class="title-select"></select>
+          <div class="spacer"></div>
+          <div class="seg-toggle" id="theme-toggle">
+            <button data-theme="infografia" class="on">Infografía</button>
+            <button data-theme="pizarra">Pizarra</button>
+          </div>
+          <label class="check"><input type="checkbox" id="captions" /> Subtítulos</label>
+          <label class="check" title="Las palabras con *énfasis* aparecen como rótulo al decirse"><input type="checkbox" id="callouts" checked /> Rótulos</label>
+          <button class="btn" id="sync-all" title="Pone de acuerdo guion, voz y animación en todos los segmentos (recoloca anclas, regenera la voz desactualizada, alinea palabra a palabra)">Sincronizar todo</button>
+          <button class="btn" id="densify" title="Claude Code añade y sincroniza escenas para que la imagen siga a la voz (no toca la narración)">Más animación</button>
+          <label class="mini-field">ppm <input type="number" id="wpm" min="110" max="240" step="5" value="180" /></label>
+          <button class="btn voice-btn" id="open-sound"><span class="vdot"></span>Sonido</button>
+          <button class="btn voice-btn" id="open-voice"><span class="vdot"></span>Voz IA</button>
+          <label class="check" id="voice-toggle-wrap" hidden><input type="checkbox" id="voice-toggle" checked /> Usar voz IA</label>
+          <button class="btn" id="save">Guardar</button>
+          <button class="btn" id="export-video">Exportar vídeo</button>
+          <button class="btn" id="download-script">Guion .txt</button>
+          <a class="btn primary" href="#teleprompter">Grabar voz <span class="arrow">→</span></a>
+        </div>
+
+        <div class="studio-grid">
+          <div class="stage-col">
+            <div class="stage" id="stage-studio"></div>
+            <div class="transport">
+              <button class="icon-btn" id="play" title="Reproducir (espacio)">▶</button>
+              <span class="time" id="time">00:00 / 00:00</span>
+              <input type="range" id="scrub" min="0" max="1000" value="0" />
+              <select id="rate"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select>
+            </div>
+            <div class="timeline" id="timeline"></div>
+            <button class="pace" id="pace" type="button"></button>
+            <div class="now-reading" id="now-reading"></div>
+          </div>
+
+          <aside class="inspector">
+            <div class="insp-tabs">
+              <button data-insp="segment" class="on">Segmento</button>
+              <button data-insp="scene">Escena</button>
+              <button data-insp="meta">Metadatos</button>
+            </div>
+
+            <div class="insp" data-insp-panel="segment">
+              <div class="row tight">
+                <span class="pill" id="seg-index">01</span>
+                <select id="seg-section">
+                  <option>HOOK</option><option>CONTEXTO</option><option>DATOS</option><option>GIRO</option><option>VEREDICTO</option><option>CIERRE</option>
+                </select>
+                <span class="muted" id="seg-dur"></span>
+              </div>
+              <div class="steps" id="seg-steps"></div>
+              <label class="field"><span>Narración (teleprompter) · *énfasis* · "..." pausa</span>
+                <textarea id="seg-narration" rows="12"></textarea>
+              </label>
+              <p class="didactic" id="seg-didactic"></p>
+              <div class="ai-box">
+                <input id="refine-instruction" placeholder="Pídele un cambio a Claude Code: más corto, otra analogía, añade una cuenta…" />
+                <button class="btn small" id="refine">Reescribir con IA</button>
+              </div>
+              <button class="btn small ghost" id="refine-didactic" title="Reescribe este segmento para que se entienda mejor (no añade datos)">Más didáctico</button>
+              <div class="row tight">
+                <button class="btn small ghost" id="seg-add">+ Segmento</button>
+                <button class="btn small ghost" id="seg-del">Borrar segmento</button>
+              </div>
+            </div>
+
+            <div class="insp" data-insp-panel="scene" hidden>
+              <div class="scene-chips" id="scene-chips"></div>
+              <div class="row tight">
+                <label class="field"><span>Tipo</span><select id="scene-type"></select></label>
+                <label class="field grow"><span>Aparece en la frase (cue)</span><input id="scene-cue" /></label>
+              </div>
+              <label class="field"><span>Propiedades (JSON)</span><textarea id="scene-props" rows="14" spellcheck="false" class="mono"></textarea></label>
+              <p class="err" id="scene-err"></p>
+              <div class="row tight">
+                <button class="btn small" id="scene-apply">Aplicar</button>
+                <button class="btn small ghost" id="scene-template">Plantilla</button>
+                <button class="btn small ghost" id="scene-add">+ Escena</button>
+                <button class="btn small ghost" id="scene-del">Borrar</button>
+              </div>
+            </div>
+
+            <div class="insp" data-insp-panel="meta" hidden>
+              <label class="field"><span>Descripción</span><textarea id="meta-desc" rows="8"></textarea></label>
+              <label class="field"><span>Etiquetas</span><input id="meta-tags" /></label>
+              <div class="field"><span>Fuentes</span><ul class="sources" id="meta-sources"></ul></div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 03 TELEPROMPTER ============ -->
+    <section class="view prompter-view" data-view="teleprompter">
+      <div class="prompter-bar">
+        <button class="btn" id="tp-rehearse">Ensayar</button>
+        <button class="btn rec" id="tp-record"><span class="rec-dot"></span>Grabar voz + vídeo</button>
+        <button class="btn ghost" id="tp-stop" disabled>Parar</button>
+        <span class="time big" id="tp-time">00:00</span>
+        <div class="spacer"></div>
+        <label class="mini-field">Velocidad <input type="range" id="tp-rate" min="0.6" max="1.5" step="0.05" value="1" /><b id="tp-rate-val">1.00×</b></label>
+        <label class="mini-field">Letra <input type="range" id="tp-size" min="28" max="84" step="2" value="52" /></label>
+        <label class="check"><input type="checkbox" id="tp-mirror" /> Espejo</label>
+        <label class="check"><input type="checkbox" id="tp-preview" checked /> Vista previa</label>
+        <label class="check" title="Al grabar, los efectos y la música van al vídeo. Actívalo solo con auriculares para que no se cuelen en el micro."><input type="checkbox" id="tp-monitor" /> Oír efectos/música (auriculares)</label>
+      </div>
+      <div class="prompter-wrap">
+        <div class="prompter" id="prompter"><div class="prompter-inner" id="prompter-inner"></div></div>
+        <div class="reading-line"></div>
+        <div class="pip" id="stage-pip"></div>
+        <div class="countdown" id="countdown" hidden>3</div>
+        <div class="vu" id="vu"><i></i></div>
+      </div>
+      <div class="prompter-help">
+        <span><kbd>Espacio</kbd> pausa</span><span><kbd>←</kbd><kbd>→</kbd> segmento</span><span><kbd>↑</kbd><kbd>↓</kbd> velocidad</span><span><kbd>Esc</kbd> parar</span>
+      </div>
+      <div class="takes" id="takes"></div>
+    </section>
+
+    <!-- ============ 04 MINIATURA ============ -->
+    <section class="view" data-view="miniatura">
+      <div class="thumb-grid">
+        <div>
+          <div class="thumb-stage"><canvas id="thumb-canvas" width="1280" height="720"></canvas></div>
+          <div class="thumb-variants" id="thumb-variants"></div>
+        </div>
+        <form class="card thumb-form" id="thumb-form">
+          <p class="kicker">04 · Miniatura</p>
+          <div id="thumb-lines"></div>
+          <button type="button" class="btn small ghost" id="thumb-add-line">+ Línea</button>
+          <div class="row tight">
+            <label class="field grow"><span>Pegatina · etiqueta</span><input name="stLabel" /></label>
+            <label class="field grow"><span>Pegatina · valor</span><input name="stValue" /></label>
+          </div>
+          <div class="row tight">
+            <label class="field grow"><span>Objeto</span><select name="icon"></select></label>
+            <label class="field grow"><span>Objeto 2</span><select name="icon2"></select></label>
+          </div>
+          <div class="field"><span>Composición</span>
+            <div class="seg-toggle" id="thumb-layout">
+              <button type="button" data-layout="left">Texto + objeto</button>
+              <button type="button" data-layout="top">Arriba + flecha</button>
+              <button type="button" data-layout="arrow">Texto → objeto</button>
+            </div>
+          </div>
+          <button type="button" class="btn primary" id="thumb-download">Descargar PNG <span class="arrow">↓</span></button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ 05 ESTILO ============ -->
+    <section class="view" data-view="estilo">
+      <div class="hero compact">
+        <p class="kicker">05 · El estilo que imita el motor</p>
+        <h2 class="mega small">ESTUDIADO DE <em id="ref-count">12</em> VÍDEOS<b>.</b></h2>
+        <p class="lede">Claude Code lee esta biblia de estilo y las transcripciones de referencia antes de escribir cada guion. Añade más referencias (de este u otro canal) y vuelve a analizar.</p>
+      </div>
+      <div class="style-grid">
+        <div class="card">
+          <form id="study-form" class="study-form">
+            <label class="field grow"><span>Canal, playlist o vídeo de YouTube</span><input name="url" value="https://www.youtube.com/@Jorge_Marfil" /></label>
+            <label class="field"><span>Nº vídeos</span><input name="limit" type="number" min="1" max="40" value="6" /></label>
+            <label class="field"><span>Filtro título</span><input name="filter" placeholder="IA|local|GPU" /></label>
+            <button class="btn" type="submit">Descargar transcripciones</button>
+          </form>
+          <button class="btn primary" id="analyze-style">Reanalizar estilo con Claude Code</button>
+          <ul class="refs" id="refs"></ul>
+          <div class="frames">
+            <figure><img src="/style/frames-infografia.jpg" alt="Fotogramas estilo infografía" /><figcaption>Estilo infografía</figcaption></figure>
+            <figure><img src="/style/frames-pizarra.jpg" alt="Fotogramas estilo pizarra" /><figcaption>Estilo pizarra</figcaption></figure>
+          </div>
+        </div>
+        <article class="card markdown" id="style-md"></article>
+      </div>
+    </section>
+
+    <!-- ============ 06 PROYECTOS ============ -->
+    <section class="view" data-view="proyectos">
+      <div class="hero compact">
+        <p class="kicker">06 · Proyectos</p>
+        <h2 class="mega small">TUS <em>VÍDEOS</em><b>.</b></h2>
+      </div>
+      <div class="projects" id="projects"></div>
+    </section>
+
+    <!-- ============ 07 PUBLICAR ============ -->
+    <section class="view" data-view="publicar">
+      <div class="hero compact">
+        <p class="kicker">07 · Publicación</p>
+        <h2 class="mega small">LISTO PARA <em>SUBIR</em><b>.</b></h2>
+        <p class="lede">Título que habla con la miniatura, descripción con capítulos reales, etiquetas y hashtags. Todo para copiar y pegar en YouTube Studio.</p>
+        <div class="row tight">
+          <button class="btn primary" id="pub-generate">Generar con Claude Code <span class="arrow">→</span></button>
+          <button class="btn" id="pub-copy-all">Copiar todo</button>
+          <span class="muted" id="pub-status"></span>
+        </div>
+      </div>
+      <div class="pub-grid">
+        <div>
+          <div class="yt-card">
+            <canvas id="pub-thumb" width="640" height="360"></canvas>
+            <div class="yt-meta"><div class="yt-avatar"></div><div><div class="yt-title" id="pub-preview-title"></div><div class="yt-sub" id="pub-preview-sub"></div></div></div>
+          </div>
+          <p class="muted">Vista previa en el feed: lo gris queda cortado en móvil (~50 caracteres visibles).</p>
+          <p class="pub-advice" id="pub-advice"></p>
+        </div>
+        <div class="pub-fields">
+          <div class="pub-block"><div class="pub-head"><b>Título</b><span class="muted">elige uno · se comprueba que no repita la miniatura</span></div><div id="pub-titles"></div></div>
+          <div class="pub-block"><div class="pub-head"><b>Descripción</b><span class="muted" id="pub-desc-count"></span><button class="btn small" data-copy="pub-desc">Copiar</button></div><textarea id="pub-desc" rows="16"></textarea><p class="err" id="pub-chapters-warn"></p></div>
+          <div class="pub-block"><div class="pub-head"><b>Etiquetas</b><span class="muted" id="pub-tags-count"></span><button class="btn small" data-copy="pub-tags">Copiar</button></div><textarea id="pub-tags" rows="3"></textarea></div>
+          <div class="pub-block"><div class="pub-head"><b>Hashtags</b><span class="muted">los 3 primeros salen encima del título (ya van al final de la descripción)</span><button class="btn small" data-copy="pub-hashtags">Copiar</button></div><input id="pub-hashtags" /></div>
+          <div class="pub-block"><div class="pub-head"><b>Comentario fijado</b><button class="btn small" data-copy="pub-pinned">Copiar</button></div><textarea id="pub-pinned" rows="2"></textarea></div>
+        </div>
+      </div>
+      <div class="shorts-head">
+        <div>
+          <p class="kicker">Shorts para acompañar</p>
+          <h3>Los momentos que mejor funcionan solos, en vertical.</h3>
+          <p class="muted">Claude Code elige 3-5 tramos de 20-55 s que arrancan con gancho y cierran con remate. Se renderizan en 9:16 con tu voz, subtítulos grandes y aviso de «vídeo completo». En YouTube Studio, enlaza cada Short al vídeo largo con «Vídeo relacionado».</p>
+        </div>
+        <button class="btn primary" id="shorts-generate">Generar shorts <span class="arrow">→</span></button>
+      </div>
+      <div class="shorts" id="shorts"></div>
+    </section>
+  </main>
+
+  <!-- Motor (Claude Code en vivo) -->
+  <aside class="engine" id="engine" hidden>
+    <header>
+      <div class="eq"><i></i><i></i><i></i><i></i><i></i></div>
+      <div>
+        <b id="engine-title">Claude Code trabajando</b>
+        <span class="muted" id="engine-elapsed">0 s</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="icon-btn" id="engine-min" title="Minimizar">–</button>
+      <button class="btn small ghost" id="engine-cancel">Cancelar</button>
+    </header>
+    <ol class="engine-log" id="engine-log"></ol>
+  </aside>
+
+  <dialog id="script-dialog" class="dialog">
+    <form method="dialog" id="script-form">
+      <p class="kicker">Nuevo vídeo</p>
+      <h3 id="sd-title"></h3>
+      <label class="field"><span>Título de trabajo</span><input name="title" /></label>
+      <div class="row tight">
+        <label class="field grow"><span>Duración: <b id="sd-min-val">14</b> min</span><input type="range" name="minutes" min="6" max="25" value="14" /></label>
+        <label class="field"><span>Modelo</span><select name="model"><option value="opus" selected>Opus</option><option value="sonnet">Sonnet</option></select></label>
+        <label class="field"><span>Esfuerzo</span><select name="effort"><option value="medium">Medio</option><option value="high" selected>Alto</option><option value="xhigh">Muy alto</option></select></label>
+      </div>
+      <label class="field"><span>Tus notas (tu experiencia, tu equipo, lo que quieres probar)</span><textarea name="notes" rows="4" placeholder="Tengo una RTX 4070 de 12 GB y 32 GB de RAM; quiero hacer la prueba en directo…"></textarea></label>
+      <div class="row tight">
+        <label class="field grow"><span>Nombre del canal</span><input name="channel" value="bramenn" /></label>
+        <label class="field"><span>Español</span><select name="variant"><option value="es-ES">España</option><option value="es-LATAM">Latam</option></select></label>
+      </div>
+      <div class="row end">
+        <button class="btn ghost" value="cancel">Cancelar</button>
+        <button class="btn primary" value="ok">Escribir guion <span class="arrow">→</span></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="voice-dialog" class="dialog wide">
+    <form method="dialog" id="voice-form">
+      <div class="row tight between">
+        <p class="kicker" style="margin:0">Voz con IA</p>
+        <div class="seg-toggle" id="voice-provider">
+          <button type="button" data-provider="fish">Fish Audio</button>
+          <button type="button" data-provider="elevenlabs">ElevenLabs</button>
+        </div>
+      </div>
+      <h3>¿No quieres grabar? Que lo lea una voz.</h3>
+
+      <div class="fish-key" id="tts-key-box">
+        <span class="pill" id="tts-status">Sin API key</span>
+        <input type="password" id="tts-key" placeholder="Pega tu API key" autocomplete="off" />
+        <button type="button" class="btn small" id="tts-key-save">Guardar clave</button>
+        <button type="button" class="btn small ghost" id="tts-key-change" title="Usar otra clave">Cambiar clave</button>
+      </div>
+
+      <div class="row tight">
+        <input id="voice-q" placeholder="Buscar voz por nombre (p. ej. español, narrador, tu clon…)" />
+        <select id="voice-scope" title="Qué voces mostrar"></select>
+        <select id="voice-sort" title="Orden">
+          <option value="score">Populares</option><option value="task_count">Más usadas</option><option value="created_at">Recientes</option>
+        </select>
+        <button type="button" class="btn small" id="voice-search">Buscar</button>
+      </div>
+      <div class="row tight">
+        <label class="field grow"><span>…o pega el ID de la voz</span><input id="voice-id" placeholder="ID de la voz" /></label>
+        <label class="field grow"><span>Frase de prueba</span><input id="voice-sample-text" /></label>
+        <button type="button" class="btn small" id="voice-try-id" title="Genera la frase de prueba con la voz del ID">▶ Probar</button>
+      </div>
+      <div class="voices" id="voices"></div>
+      <div class="row tight between" id="voices-foot"><span class="muted" id="voices-count"></span><button type="button" class="btn small ghost" id="voices-more" hidden>Cargar más</button></div>
+
+      <div class="row tight">
+        <label class="field"><span>Modelo</span><select id="voice-model"></select></label>
+        <label class="field grow"><span>Velocidad: <b id="voice-speed-val">1.00×</b></span><input type="range" id="voice-speed" min="0.8" max="1.3" step="0.05" value="1" /></label>
+      </div>
+      <div class="row tight" data-for="fish">
+        <label class="field grow"><span>Expresividad: <b data-val="voice-temp">0.70</b></span><input type="range" id="voice-temp" min="0.3" max="1" step="0.05" value="0.7" /></label>
+      </div>
+      <div class="row tight" data-for="elevenlabs">
+        <label class="field grow"><span>Estabilidad: <b data-val="voice-stability">0.50</b></span><input type="range" id="voice-stability" min="0" max="1" step="0.05" value="0.5" /></label>
+        <label class="field grow"><span>Similitud: <b data-val="voice-similarity">0.75</b></span><input type="range" id="voice-similarity" min="0" max="1" step="0.05" value="0.75" /></label>
+        <label class="field grow"><span>Estilo: <b data-val="voice-style">0.00</b></span><input type="range" id="voice-style" min="0" max="1" step="0.05" value="0" /></label>
+      </div>
+      <p class="temp-warn" id="voice-temp-warn" hidden>⚠️ Expresividad muy alta: suena más viva, pero aumentan las palabras mal pronunciadas o sílabas raras. Recomendado 0,5–0,7.</p>
+      <details class="lexicon" id="lexicon-box">
+        <summary>Pronunciación <span class="muted">— cómo debe decir la voz palabras en inglés y siglas (se aplica igual en todos los vídeos)</span></summary>
+        <div class="lex-head"><span>Se escribe</span><span>Se dice</span><span></span></div>
+        <div id="lexicon-rows"></div>
+        <div class="row tight">
+          <button type="button" class="btn small ghost" id="lex-add">+ Palabra</button>
+          <button type="button" class="btn small ghost" id="lex-reset" title="Vuelve a la lista inicial">Restaurar lista inicial</button>
+          <div class="spacer"></div>
+          <button type="button" class="btn small" id="lex-save">Guardar pronunciaciones</button>
+        </div>
+      </details>
+      <label class="check" title="Baja suavemente (-15 dB) las respiraciones en las pausas entre frases. Nunca toca la voz: solo actúa si lo que suena en la pausa está muy por debajo de ella"><input type="checkbox" id="voice-breath" checked /> Limpiar respiraciones y sonidos entre frases</label>
+      <label class="check"><input type="checkbox" id="voice-adapt" checked /> Adaptar cifras y siglas para que la voz las lea bien (Claude Code: «1.099 $» → «mil noventa y nueve dólares»)</label>
+      <p class="muted" id="voice-info"></p>
+
+      <div class="row end">
+        <button type="button" class="btn ghost" id="voice-wav" disabled>Descargar voz (.wav)</button>
+        <button type="button" class="btn ghost" id="voice-remove" disabled>Quitar voz IA</button>
+        <button class="btn ghost" value="cancel">Cerrar</button>
+        <button type="button" class="btn" id="voice-use" title="Guarda la voz para este proyecto sin generar; luego la generas segmento a segmento">Usar esta voz</button>
+        <button type="button" class="btn primary" id="voice-generate">Generar voz (todo) <span class="arrow">→</span></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="sound-dialog" class="dialog wide">
+    <form method="dialog" id="sound-form">
+      <p class="kicker">Sonido · efectos sincronizados + música de fondo</p>
+      <h3>Que suene profesional, sin cansar.</h3>
+      <p class="muted sound-why">La voz manda. Los efectos solo suenan en momentos visuales con significado (cambio de escena, un dato que entra, un giro), separados y con tope por minuto; la música va 18-24 dB por debajo de la voz y sube un poco en las pausas.</p>
+
+      <div class="fish-key" id="fs-key-box">
+        <span class="pill" id="fs-status">Sin API key</span>
+        <input type="password" id="fs-key" placeholder="API key de Freesound (freesound.org → Apply for an API key)" autocomplete="off" />
+        <button type="button" class="btn small" id="fs-key-save">Guardar clave</button>
+        <button type="button" class="btn small ghost" id="fs-key-change">Cambiar clave</button>
+      </div>
+
+      <div class="mix-grid">
+        <label class="check"><input type="checkbox" id="mix-sfx" /> Efectos</label>
+        <label class="field"><span>Volumen efectos: <b id="mix-sfx-val"></b></span><input type="range" id="mix-sfx-db" min="-30" max="-6" step="1" /></label>
+        <label class="check"><input type="checkbox" id="mix-music" /> Música</label>
+        <label class="field"><span>Música bajo la voz: <b id="mix-music-val"></b></span><input type="range" id="mix-music-db" min="-34" max="-12" step="1" /></label>
+        <div class="field"><span>Densidad de efectos</span>
+          <div class="seg-toggle" id="mix-density"><button type="button" data-d="sutil">Sutil</button><button type="button" data-d="normal">Normal</button><button type="button" data-d="marcado">Marcado</button></div>
+        </div>
+        <label class="field"><span>Música en las pausas: <b id="mix-gap-val"></b></span><input type="range" id="mix-gap" min="0" max="12" step="1" /></label>
+      </div>
+      <p class="muted" id="mix-stats"></p>
+
+      <div class="row tight between">
+        <b>Tu kit</b>
+        <div class="row tight">
+          <select id="fs-licenses" title="Licencias permitidas"><option value="cc0">Solo CC0 (sin créditos)</option><option value="cc0+by">CC0 + CC BY (con créditos)</option></select>
+          <button type="button" class="btn small" id="kit-auto">Kit automático</button>
+        </div>
+      </div>
+      <div class="kit" id="kit"></div>
+
+      <div class="fs-search" id="fs-search" hidden>
+        <div class="row tight">
+          <b id="fs-search-title"></b>
+          <input id="fs-q" placeholder="Buscar en Freesound…" />
+          <button type="button" class="btn small" id="fs-go">Buscar</button>
+          <button type="button" class="btn small ghost" id="fs-close">×</button>
+        </div>
+        <div class="fs-results" id="fs-results"></div>
+      </div>
+
+      <details class="credits"><summary>Créditos para la descripción de YouTube</summary>
+        <textarea id="fs-credits" rows="4" readonly></textarea>
+        <button type="button" class="btn small" id="fs-credits-copy">Copiar</button>
+      </details>
+
+      <div class="row end">
+        <span class="muted">Descargar audio (.wav):</span>
+        <button type="button" class="btn small ghost" data-stem="mix">Mezcla</button>
+        <button type="button" class="btn small ghost" data-stem="voice">Voz</button>
+        <button type="button" class="btn small ghost" data-stem="sfx">Efectos</button>
+        <button type="button" class="btn small ghost" data-stem="music">Música</button>
+        <button class="btn primary" value="cancel">Listo</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="short-view" id="short-view" hidden>
+    <div class="short-view-inner">
+      <canvas id="short-big" width="1080" height="1920"></canvas>
+      <div class="short-view-bar">
+        <button class="btn small" id="short-replay">↺ Repetir</button>
+        <button class="btn small primary" id="short-close">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

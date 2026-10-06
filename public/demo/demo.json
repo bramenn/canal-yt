@@ -1,0 +1,95 @@
+{
+  "id": "demo",
+  "topic": { "title": "DEMO · ¿Me compro una gráfica de 24 GB para IA local?" },
+  "settings": { "wpm": 180, "theme": "infografia", "captions": false, "channel": "bramenn", "variant": "es-ES" },
+  "video": {
+    "title": "DEMO · ¿Me Compro una Gráfica de 24 GB para IA Local?",
+    "alt_titles": [
+      "No Compres una Gráfica para IA Local Sin Hacer Esta Cuenta..",
+      "¿Cuánto Tarda en Amortizarse una GPU para IA Local?",
+      "Es la Memoria, No la Gráfica: Lo Que Nadie Calcula"
+    ],
+    "description": "PROYECTO DE DEMOSTRACIÓN del motor de animación. Las cifras son ejemplos ilustrativos para enseñar cada tipo de escena; no son datos verificados.\n\n00:00 La tentación\n00:40 La cuenta de la memoria\n01:30 El giro\n02:10 Veredicto",
+    "tags": ["ia local", "gpu", "llm", "demo"],
+    "thumbnail": {
+      "lines": [{ "text": "ES LA", "color": "white" }, { "text": "MEMORIA.", "color": "yellow" }],
+      "sticker": { "label": "Mínimo", "value": "24 GB" },
+      "icon": "gpu",
+      "icon2": "ram",
+      "layout": "left"
+    },
+    "alt_thumbnails": [
+      { "lines": [{ "text": "ESPERA...", "color": "white" }, { "text": "¿CUÁNTO?", "color": "red" }], "sticker": { "label": "Una gráfica hoy", "value": "1.899 $" }, "icon": "gpu", "icon2": "model", "layout": "top" },
+      { "lines": [{ "text": "MEJOR", "color": "white" }, { "text": "ESPERA.", "color": "yellow" }], "sticker": { "label": "Amortización", "value": "6 años" }, "icon": "gpu", "icon2": "none", "layout": "left" }
+    ],
+    "sources": [],
+    "segments": [
+      {
+        "section": "HOOK",
+        "narration": "Son las 11 de la noche y tengo dos pestañas abiertas. En una, una gráfica de *24 GB*. En la otra, la factura de mi suscripción de IA.\nY una vocecita muy segura de sí misma me dice: cómprala, cancela el plan y no vuelvas a pagarle a nadie.\nEsa es la pregunta del impulso. La de verdad es *la tuya*... la de tu dinero.",
+        "scenes": [
+          { "type": "title", "cue": "", "lines": [{ "text": "¿ME LA", "color": "white" }, { "text": "COMPRO?", "color": "yellow" }], "icon": "gpu" },
+          { "type": "versus", "cue": "Y una vocecita muy", "lines": [{ "text": "La vocecita: *cómprala*", "color": "white" }], "items": [{ "label": "Gráfica 24 GB", "icon": "gpu", "display": "1.899 $" }, { "label": "Suscripción", "icon": "cloud", "display": "20 $/mes", "highlight": true }] },
+          { "type": "wait", "cue": "Esa es la pregunta", "lines": [{ "text": "LA PREGUNTA", "color": "white" }, { "text": "DE VERDAD.", "color": "red" }] }
+        ]
+      },
+      {
+        "section": "CONTEXTO",
+        "narration": "Os lo cuento desde cero. Un modelo es, básicamente, un montón de números que ha aprendido: los *parámetros*.\nPara usarlo en casa, esos números tienen que caber en la memoria de tu gráfica, la VRAM. Pensad en la cocina de un restaurante.\nLa encimera es la VRAM: pequeña, pero rapidísima. La despensa es la RAM: cabe mucho más, pero cada viaje cuesta. Y el trastero es el disco.",
+        "scenes": [
+          { "type": "terminal", "cue": "", "code": "$ ollama run qwen:27b\npulling manifest... done\nloading model into VRAM... 16.2 GB\n>>> hola\n¡Hola! ¿En qué te ayudo?", "caption": "Lo que pasa cuando cabe" },
+          { "type": "analogy", "cue": "Pensad en la cocina", "lines": [{ "text": "La cocina de un *restaurante*", "color": "white" }], "items": [{ "label": "Encimera", "display": "VRAM", "note": "pequeña · rapidísima" }, { "label": "Despensa", "display": "RAM", "note": "mucho más · cada viaje cuesta" }, { "label": "Trastero", "display": "SSD", "note": "enorme · lento" }] }
+        ]
+      },
+      {
+        "section": "DATOS",
+        "narration": "Vamos con la cuenta, que es simple multiplicación. Un modelo de *27.000 millones* de parámetros, comprimido a 4 bits por número...\n27.000 millones por 4 bits son 108.000 millones de bits. Entre 8 bits por byte... unos *13,5 GB*. Súmale el hueco para la conversación y te vas a unos 16.\nAsí que en una gráfica de 24 GB *cabe*. Y en una de 12, no.",
+        "scenes": [
+          { "type": "calc", "cue": "", "lines": [{ "text": "¿Cuánta *memoria*?", "color": "white" }], "items": [{ "label": "27.000M × 4 bits", "display": "108.000M bits" }, { "label": "÷ 8 bits por byte", "display": "13,5 GB" }, { "label": "+ conversación", "display": "≈ 16 GB", "highlight": true }] },
+          { "type": "compare", "cue": "Así que en una", "lines": [{ "text": "¿Dónde *cabe*?", "color": "white" }], "items": [{ "label": "Gráfica 12 GB", "value": 12, "display": "NO CABE" }, { "label": "Necesita", "value": 16, "display": "16 GB" }, { "label": "Gráfica 24 GB", "value": 24, "display": "CABE", "highlight": true }] }
+        ]
+      },
+      {
+        "section": "DATOS",
+        "narration": "Vale, antes de seguir, vamos a repasar lo que llevamos.\nEl modelo son números. Comprimido, este ocupa unos 13 GB y medio. Y con la conversación necesita unos 16. Si no cabe en la encimera... *no arranca*.",
+        "scenes": [
+          { "type": "list", "cue": "", "lines": [{ "text": "Punto de *control*", "color": "white" }], "items": [{ "label": "El modelo son números", "note": "los parámetros" }, { "label": "Comprimido: 13,5 GB", "note": "a 4 bits por número" }, { "label": "Si no cabe, no arranca", "note": "cuenta la memoria primero", "highlight": true }] }
+        ]
+      },
+      {
+        "section": "GIRO",
+        "narration": "Pero espera... que caber no es lo mismo que *compensar*. Primero quiero ser justo: la gráfica va rapidísima, y eso es real.\nAhora, la cuenta de dinero. Si escribe 30 palabras por segundo y la usas en horario de oficina, lo que produce en un mes valdría unos 25 dólares alquilado. La cuenta es mía, pero es simple división.\n1.899 entre 25... son *76 meses*. Más de seis años. Un plan de amortización para tus nietos.",
+        "scenes": [
+          { "type": "wait", "cue": "", "lines": [{ "text": "ESPERA...", "color": "white" }, { "text": "¿COMPENSA?", "color": "red" }] },
+          { "type": "stat", "cue": "Primero quiero ser justo", "lines": [{ "text": "Velocidad *real*", "color": "white" }], "value": "30 TOK/S", "caption": "más rápido de lo que lees" },
+          { "type": "price", "cue": "Ahora, la cuenta de", "lines": [{ "text": "Lo que produce *en un mes*", "color": "white" }], "icon": "money", "sticker": { "label": "Valor alquilado", "value": "25 $/mes" } },
+          { "type": "grid", "cue": "1.899 entre 25...", "lines": [{ "text": "76 meses: *más de 6 años*", "color": "white" }], "value": "1/6", "caption": "lo amortizado en el primer año" }
+        ]
+      },
+      {
+        "section": "GIRO",
+        "narration": "Y la comunidad lo dice de otra forma. En un hilo, la respuesta más votada venía a decir que lo local es para lo que se puede *deducir*, y lo puntero para lo que hay que *decidir*.\nY cada generación promete más. Pero ojo, que la que acaba de salir no siempre es mejor que la anterior.",
+        "scenes": [
+          { "type": "quote", "cue": "", "quote": { "text": "Lo local, para lo que se puede *deducir*. Lo puntero, para lo que hay que *decidir*.", "source": "r/LocalLLaMA · la respuesta más votada", "votes": "412" } },
+          { "type": "stairs", "cue": "Y cada generación promete", "lines": [{ "text": "Nuevo *no siempre* es mejor", "color": "white" }], "items": [{ "label": "G1", "display": "12 GB" }, { "label": "G2", "display": "16 GB" }, { "label": "G3", "display": "24 GB" }, { "label": "G4", "display": "16 GB", "highlight": true }] }
+        ]
+      },
+      {
+        "section": "VEREDICTO",
+        "narration": "Entonces, ¿qué haría yo? Si ya tienes una gráfica de 16 o 24 GB, *exprímela* esta semana: es gratis. Si tienes que comprarla solo para ahorrar... no merece la pena.\nY la regla es corta: *cuenta la memoria antes que la velocidad*.",
+        "scenes": [
+          { "type": "showcase", "cue": "", "lines": [{ "text": "¿Qué *haría yo*?", "color": "white" }], "items": [{ "label": "Ya la tienes", "icon": "gpu", "display": "Exprímela", "highlight": true }, { "label": "Para ahorrar", "icon": "money", "display": "No compres" }, { "label": "Para lo gordo", "icon": "cloud", "display": "La nube" }] },
+          { "type": "verdict", "cue": "Si tienes que comprarla", "lines": [{ "text": "NO MERECE", "color": "white" }, { "text": "LA PENA.", "color": "white" }], "mood": "negative", "icon": "gpu", "sticker": { "label": "Para ahorrar", "value": "6 años" } }
+        ]
+      },
+      {
+        "section": "CIERRE",
+        "narration": "Y aquellas dos pestañas de las 11 de la noche... pues cerré la de la gráfica. Espero que esto te haya ahorrado una compra.\nContadme en los comentarios qué gráfica tenéis y cuánta memoria, que así aprendemos todos.",
+        "scenes": [
+          { "type": "title", "cue": "", "lines": [{ "text": "CUENTA LA", "color": "white" }, { "text": "*MEMORIA*.", "color": "white" }], "sticker": { "label": "La regla", "value": "antes que la velocidad" } },
+          { "type": "cta", "cue": "Contadme en los comentarios", "lines": [{ "text": "¿Qué *gráfica* tenéis?", "color": "white" }], "caption": "Contádmelo en los comentarios" }
+        ]
+      }
+    ]
+  }
+}

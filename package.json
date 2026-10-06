@@ -1,0 +1,10 @@
+{
+  "name": "canal-bramenn-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Estudio de vídeos de IA: descubre temas, genera guiones con Claude Code, anima escenas y graba con teleprompter.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
