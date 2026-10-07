@@ -1,6 +1,10 @@
 // Primitivas de dibujo en canvas con la estética del canal:
 // fondo casi negro, bloques planos con sombras desplazadas roja/azul, tipografía condensada enorme.
 
+import { LOGOS, LOGO_IDS, isLogo, logoImage } from './logos.js';
+import { objectDrawers } from './objects.js';
+import { OBJECT_NAMES } from './object-list.js';
+
 export const W = 1920;
 export const H = 1080;
 
@@ -11,21 +15,38 @@ const PALETTES = {
   infografia: {
     bg: '#171717', bg2: '#202020', white: '#F2F0EA', red: '#E5413A', yellow: '#F5C518', blue: '#2E7BE6',
     green: '#6CC24A', pink: '#E5413A', ink: '#0d0d0d', grey: '#8d8d8d', silver: '#d8d9dc', orange: '#E0794F',
+    lite: '#F2F0EA', onWhite: '#0d0d0d', cell: '#2a2a2a',
   },
   pizarra: {
     bg: '#050505', bg2: '#0c0c0c', white: '#F4F4F4', red: '#FF4D4D', yellow: '#FFE14D', blue: '#4FC3FF',
     green: '#62E36B', pink: '#FF4FB8', ink: '#050505', grey: '#a9a9a9', silver: '#d8d9dc', orange: '#FF9A4D',
+    lite: '#F4F4F4', onWhite: '#050505', cell: '#2a2a2a',
+  },
+  // papel claro, tipo periódico/revista: noticias, polémicas, citas. "white" es el color de texto principal.
+  editorial: {
+    bg: '#F1ECE2', bg2: '#E4DDCD', white: '#151515', red: '#C9362B', yellow: '#C98A00', blue: '#1F5FC4',
+    green: '#3B8A2A', pink: '#C9362B', ink: '#151515', grey: '#6B665C', silver: '#d8d9dc', orange: '#C96A3A',
+    lite: '#F7F3EA', onWhite: '#F1ECE2', cell: '#D6CEBC',
+  },
+  // negro con acentos neón y titulares monoespaciados: vídeos técnicos (IA local, motores, benchmarks)
+  terminal: {
+    bg: '#05090B', bg2: '#0C1519', white: '#D9FFE9', red: '#FF4D6D', yellow: '#3CFF8F', blue: '#3CC8FF',
+    green: '#3CFF8F', pink: '#FF4FD8', ink: '#03110A', grey: '#5E8574', silver: '#d8d9dc', orange: '#FFB13C',
+    lite: '#D9FFE9', onWhite: '#03110A', cell: '#12231C',
   },
 };
+export const THEMES = Object.keys(PALETTES);
 
 export const C = { ...PALETTES.infografia };
-export const THEME = { name: 'infografia', chalk: false };
+export const THEME = { name: 'infografia', chalk: false, light: false, mono: false };
 
 export function setTheme(name) {
   const key = PALETTES[name] ? name : 'infografia';
   Object.assign(C, PALETTES[key]);
   THEME.name = key;
   THEME.chalk = key === 'pizarra';
+  THEME.light = key === 'editorial';
+  THEME.mono = key === 'terminal';
 }
 
 export const FONT = '"Inter Tight", "Arial Narrow", sans-serif';
@@ -51,6 +72,7 @@ export const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
 // ---------- texto ----------
 export function font(ctx, size, weight = 800, family = FONT) {
   if (THEME.chalk && family !== MONO) { family = HAND; weight = 700; size *= 1.08; }
+  else if (THEME.mono && family === FONT) { family = MONO; weight = Math.min(weight, 700); size *= 0.9; }
   ctx.font = `${weight} ${Math.round(size)}px ${family}`;
 }
 
@@ -313,7 +335,7 @@ const ICON_DRAW = {
     shine.addColorStop(clamp(k + 0.1), 'rgba(255,255,255,0)');
     rrect(ctx, -s / 2, -s / 2, s, s, 14); ctx.fillStyle = shine; ctx.fill();
     const label = (o?.label || 'AI').toUpperCase();
-    txt(ctx, label, 0, s * 0.1, { size: s * 0.3, color: C.white, align: 'center', base: 'middle', maxW: s * 0.8 });
+    txt(ctx, label, 0, s * 0.1, { size: s * 0.3, color: C.lite, align: 'center', base: 'middle', maxW: s * 0.8 });
     if (o?.sub) txt(ctx, o.sub.toUpperCase(), 0, s * 0.3, { size: s * 0.09, color: C.grey, align: 'center', weight: 700, spacing: 3, maxW: s * 0.8 });
   },
   server(ctx, S, t) {
@@ -325,7 +347,7 @@ const ICON_DRAW = {
       ctx.fillStyle = C.ink; rrect(ctx, -w / 2 + 24, y + 6, w - 90, rh - 12, 6); ctx.fill();
       ctx.fillStyle = i % 2 ? C.blue : C.red;
       ctx.fillRect(-w / 2 + 40, y + rh * 0.3, 18, 8);
-      ctx.fillStyle = C.white; ctx.fillRect(-w / 2 + 70, y + rh * 0.3, 40, 6);
+      ctx.fillStyle = C.lite; ctx.fillRect(-w / 2 + 70, y + rh * 0.3, 40, 6);
       const fr = rh * 0.3;
       fan(ctx, w * 0.02, y + rh / 2, fr, t + i);
       fan(ctx, w * 0.02 + fr * 2.3, y + rh / 2, fr, t + i + 0.5);
@@ -339,12 +361,32 @@ const ICON_DRAW = {
     ctx.fillStyle = C.yellow;
     for (let i = 0; i < 14; i++) ctx.fillRect(-w / 2 + 30 + i * (w - 60) / 14, h / 2 - 34, (w - 60) / 14 - 8, 22);
     const label = (o?.label || 'RAM').toUpperCase();
-    txt(ctx, label, 0, -h * 0.02, { size: h * 0.3, color: C.white, align: 'center', base: 'middle', maxW: w * 0.85 });
-    if (label !== 'RAM') txt(ctx, 'RAM', 0, h * 0.22, { size: h * 0.1, color: C.white, align: 'center', weight: 700, spacing: 10 });
+    txt(ctx, label, 0, -h * 0.02, { size: h * 0.3, color: C.lite, align: 'center', base: 'middle', maxW: w * 0.85 });
+    if (label !== 'RAM') txt(ctx, 'RAM', 0, h * 0.22, { size: h * 0.1, color: C.lite, align: 'center', weight: 700, spacing: 10 });
   },
+  // modelo de IA genérico (red neuronal): neutro, no se parece al logo de ninguna empresa
   model(ctx, S, t) {
     const s = S * 0.62;
-    block(ctx, -s / 2, -s / 2, s, s, { fill: '#1d1d1d', r: 4, stroke: C.white, lw: 6, shadows: [[12, 12, C.red]] });
+    block(ctx, -s / 2, -s / 2, s, s, { fill: '#1d1d1d', r: 4, stroke: C.lite, lw: 6, shadows: [[12, 12, C.red]] });
+    const cols = [[-0.3, [-0.22, 0, 0.22]], [0, [-0.3, -0.1, 0.1, 0.3]], [0.3, [-0.15, 0.15]]].map(([x, ys]) => ys.map((y) => [x * s, y * s]));
+    // conexiones, con un pulso que recorre la red
+    ctx.lineWidth = Math.max(2, s * 0.012);
+    for (let c = 0; c < cols.length - 1; c++) {
+      for (const [x1, y1] of cols[c]) for (const [x2, y2] of cols[c + 1]) {
+        const k = (Math.sin(t * 3 - c * 1.2 + y1 * 0.02 + y2 * 0.03) + 1) / 2;
+        ctx.strokeStyle = `rgba(242,240,234,${0.18 + 0.35 * k})`;
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      }
+    }
+    cols.forEach((col, c) => col.forEach(([x, y], k) => {
+      ctx.fillStyle = c === 1 ? C.yellow : c === 2 ? C.blue : C.lite;
+      ctx.beginPath(); ctx.arc(x, y, s * 0.055, 0, Math.PI * 2); ctx.fill();
+    }));
+  },
+  // asterisco naranja (disponible a propósito; ya no es el icono por defecto de "modelo")
+  burst(ctx, S, t) {
+    const s = S * 0.62;
+    block(ctx, -s / 2, -s / 2, s, s, { fill: '#1d1d1d', r: 4, stroke: C.lite, lw: 6, shadows: [[12, 12, C.red]] });
     burst(ctx, 0, 0, s * 0.36, t);
   },
   cloud(ctx, S, t) {
@@ -414,11 +456,37 @@ const ICON_DRAW = {
   },
 };
 
-export const ICON_NAMES = Object.keys(ICON_DRAW);
+export const ICON_NAMES = [...Object.keys(ICON_DRAW), ...OBJECT_NAMES, ...LOGO_IDS];
 
 /** Dibuja un icono centrado en (cx,cy) con ancho nominal S. o.label para chip/ram. */
+/** Logo de una empresa/modelo: SVG original sobre placa blanca, con las sombras del canal. */
+function drawLogo(ctx, id, S) {
+  const g = ctx.__raw || ctx; // en pizarra la placa sigue siendo sólida (el logo necesita fondo claro)
+  const s = S * 0.62;
+  block(g, -s / 2, -s / 2, s, s, { fill: '#FFFFFF', r: s * 0.18, stroke: null, shadows: [[12, 12, C.red]] });
+  const img = logoImage(id);
+  if (img) {
+    const k = s * 0.64;
+    g.drawImage(img, -k / 2, -k / 2, k, k);
+  } else {
+    txt(g, LOGOS[id], 0, 0, { size: s * 0.16, color: '#151515', align: 'center', base: 'middle', maxW: s * 0.86 });
+  }
+}
+
+// objetos de objects.js (se crean al primer uso para no depender del orden de carga de los módulos)
+let OBJ = null;
+const objDraw = () => (OBJ ??= objectDrawers());
+
 export function icon(ctx, name, cx, cy, S, t = 0, o = {}) {
-  const fn = ICON_DRAW[name] || ICON_DRAW.model;
+  if (isLogo(name)) {
+    ctx.save(); ctx.translate(cx, cy);
+    if (o.rot) ctx.rotate(o.rot);
+    if (o.scale != null) ctx.scale(o.scale, o.scale);
+    drawLogo(ctx, name, S);
+    ctx.restore();
+    return;
+  }
+  const fn = ICON_DRAW[name] || objDraw()[name] || ICON_DRAW.model;
   ctx.save();
   ctx.translate(cx, cy);
   if (o.rot) ctx.rotate(o.rot);
@@ -439,7 +507,7 @@ export function pill(ctx, text, x, y, o = {}) {
   rrect(ctx, x0, y - h / 2, w, h, 3);
   if (filled) { ctx.fillStyle = color; ctx.fill(); }
   else { ctx.lineWidth = 2.5; ctx.strokeStyle = color; ctx.stroke(); }
-  txt(ctx, label, x0 + w / 2, y + 1, { size, family: MONO, weight: 600, color: textColor || (filled ? C.ink : color), align: 'center', base: 'middle', spacing: size * 0.08 });
+  txt(ctx, label, x0 + w / 2, y + 1, { size, family: MONO, weight: 600, color: textColor || (filled ? (color === C.white ? C.onWhite : C.ink) : color), align: 'center', base: 'middle', spacing: size * 0.08 });
   return w;
 }
 
@@ -450,7 +518,7 @@ export function tag(ctx, text, x, y, o = {}) {
   const w = tw + size * 0.6, h = size * 1.3;
   const x0 = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
   block(ctx, x0, y - h / 2, w, h, { fill, r: 4, shadows: shadow ? [[size * 0.1, size * 0.1, shadow]] : [] });
-  txt(ctx, text, x0 + w / 2, y + size * 0.04, { size, color: color || (fill === C.red || fill === C.blue ? C.white : C.ink), align: 'center', base: 'middle' });
+  txt(ctx, text, x0 + w / 2, y + size * 0.04, { size, color: color || (fill === C.red || fill === C.blue ? C.lite : fill === C.white ? C.onWhite : C.ink), align: 'center', base: 'middle' });
   return w;
 }
 
@@ -526,7 +594,7 @@ export function background(ctx, w = W, h = H) {
 export function finish(ctx, t, w = W, h = H) {
   const v = ctx.createRadialGradient(w / 2, h / 2, h * 0.45, w / 2, h / 2, w * 0.75);
   v.addColorStop(0, 'rgba(0,0,0,0)');
-  v.addColorStop(1, `rgba(0,0,0,${THEME.chalk ? 0.2 : 0.4})`);
+  v.addColorStop(1, `rgba(0,0,0,${THEME.chalk ? 0.2 : THEME.light ? 0.12 : 0.4})`);
   ctx.fillStyle = v;
   ctx.fillRect(0, 0, w, h);
   ctx.save();
@@ -538,4 +606,12 @@ export function finish(ctx, t, w = W, h = H) {
   ctx.fillStyle = pat;
   ctx.fillRect(0, 0, w + 256, h + 256);
   ctx.restore();
+  // terminal: líneas de barrido muy sutiles
+  if (THEME.mono) {
+    ctx.save();
+    ctx.globalAlpha = 0.07;
+    ctx.fillStyle = '#000';
+    for (let y = (Math.floor(t * 40) % 4); y < h; y += 4) ctx.fillRect(0, y, w, 1);
+    ctx.restore();
+  }
 }

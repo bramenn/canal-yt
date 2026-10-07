@@ -4,3 +4,4 @@ projects/
 node_modules/
 .secrets/
 sounds/
+__pycache__/

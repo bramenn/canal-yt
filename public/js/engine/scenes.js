@@ -385,14 +385,14 @@ export const SCENES = {
         const m = shown.match(/^(\s*[$>#])(.*)$/);
         const pre = m ? m[1] : '';
         txt(ctx, pre, 50, y, { size: 36, family: MONO, weight: 600, color: C.yellow });
-        txt(ctx, m ? m[2] : shown, 50 + measure(ctx, pre, 36, 600, MONO), y, { size: 36, family: MONO, weight: 500, color: C.white, maxW: w - 140 });
+        txt(ctx, m ? m[2] : shown, 50 + measure(ctx, pre, 36, 600, MONO), y, { size: 36, family: MONO, weight: 500, color: C.lite, maxW: w - 140 });
         if (shown.length < ln.length) cursor = [50 + measure(ctx, shown, 36, 500, MONO) + 6, y];
       } else {
         txt(ctx, shown, 50, y, { size: 32, family: MONO, weight: 400, color: /error|fail/i.test(ln) ? C.red : '#a9a9a9', maxW: w - 100 });
       }
       if (!cursor && i === code.length - 1 && budget > 0) cursor = [50, y + 70];
     });
-    if (cursor && Math.floor(t * 2.5) % 2 === 0) { ctx.fillStyle = C.white; ctx.fillRect(cursor[0], cursor[1] - 30, 18, 38); }
+    if (cursor && Math.floor(t * 2.5) % 2 === 0) { ctx.fillStyle = C.lite; ctx.fillRect(cursor[0], cursor[1] - 30, 18, 38); }
     ctx.restore();
     caption(ctx, s, t, 1010, 1);
   },
@@ -448,7 +448,7 @@ export const SCENES = {
       if (appear <= 0) continue;
       const on = i < filled && t > 0.9 + (i / Math.max(1, filled)) * 0.8;
       ctx.globalAlpha = appear;
-      ctx.fillStyle = on ? C.green : '#2a2a2a';
+      ctx.fillStyle = on ? C.green : C.cell;
       ctx.fillRect(x0 + c * (cell + gap), y0 + r * (cell + gap), cell, cell);
     }
     ctx.globalAlpha = 1;
@@ -542,6 +542,204 @@ export const SCENES = {
     }
     caption(ctx, s, t, 880, 1.6);
   },
+
+  // ------------------------------------------------------------ conversación usuario ↔ IA
+  chat(ctx, s, t) {
+    const hasTitle = topTitle(ctx, s, t, 140, 60);
+    const msgs = items(s).slice(0, 5);
+    const maxW = 1120, size = 40, pad = 30;
+    let y = hasTitle ? 230 : 150;
+    msgs.forEach((m, i) => {
+      const t0 = at(i, 0.4 + i * 1.3);
+      const ai = !!m.highlight;
+      const lines = wrapWords(ctx, richWords(String(m.note ?? '')), maxW - pad * 2, size, 600);
+      const h = Math.max(1, lines.length) * size * 1.3 + pad * 1.6 + 34;
+      // la IA "escribe" antes de responder
+      if (ai && t > t0 - 0.9 && t < t0) {
+        ctx.save();
+        rrect(ctx, 1920 - 200 - 190, y, 190, 80, 24); ctx.fillStyle = C.bg2; ctx.fill();
+        for (let k = 0; k < 3; k++) { ctx.fillStyle = C.grey; ctx.globalAlpha = 0.4 + 0.6 * Math.max(0, Math.sin(t * 8 - k * 0.9)); ctx.beginPath(); ctx.arc(1920 - 200 - 140 + k * 45, y + 40, 10, 0, Math.PI * 2); ctx.fill(); }
+        ctx.restore();
+      }
+      const p = ease.out5(prog(t, t0, 0.45));
+      if (p <= 0) return;
+      const bw = Math.min(maxW, Math.max(...lines.map((ln) => (ln.length ? ln[ln.length - 1].x + ln[ln.length - 1].width : 0)), 200) + pad * 2);
+      const x = ai ? 1920 - 200 - bw : 200;
+      ctx.save();
+      ctx.globalAlpha *= clamp(p * 1.4);
+      ctx.translate((1 - p) * (ai ? 60 : -60), (1 - p) * 20);
+      block(ctx, x, y, bw, h, { fill: ai ? C.bg2 : C.blue, r: 22, stroke: ai ? C.yellow : null, lw: 3, shadows: ai ? [[8, 8, C.red]] : [] });
+      txt(ctx, up(m.label || (ai ? 'IA' : 'Tú')), x + pad, y + 30, { size: 22, family: MONO, weight: 600, color: ai ? C.yellow : C.white, spacing: 3 });
+      lines.forEach((ln, li) => ln.forEach((wd) => {
+        font(ctx, size, 600); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = wd.em ? C.yellow : C.white;
+        ctx.fillText(wd.w, x + pad + wd.x, y + 34 + pad + size * 0.9 + li * size * 1.3);
+      }));
+      ctx.restore();
+      y += h + 26;
+    });
+    caption(ctx, s, t, 1010, 1);
+  },
+
+  // ------------------------------------------------------------ línea de tiempo (lanzamientos, fechas)
+  timeline(ctx, s, t) {
+    topTitle(ctx, s, t);
+    const its = items(s).slice(0, 6);
+    const n = Math.max(1, its.length);
+    const x0 = 200, x1 = 1720, y = 560;
+    const xs = its.map((_, i) => (n === 1 ? (x0 + x1) / 2 : x0 + ((x1 - x0) * i) / (n - 1)));
+    const times = its.map((_, i) => at(i, 0.4 + i * 0.6));
+    // la línea avanza hasta el último punto que ya ha entrado
+    const reached = times.filter((x) => t >= x).length;
+    const target = reached ? xs[reached - 1] + (reached < n ? Math.min(1, (t - times[reached - 1]) / 0.6) * (xs[reached] - xs[reached - 1]) * 0.35 : 0) : x0;
+    ctx.fillStyle = C.bg2; ctx.fillRect(x0, y - 4, x1 - x0, 8);
+    ctx.fillStyle = C.yellow; ctx.fillRect(x0, y - 4, Math.max(0, target - x0), 8);
+    const slot = (x1 - x0) / Math.max(1, n - 1 || 1);
+    its.forEach((it, i) => {
+      const p = ease.back(prog(t, times[i], 0.5));
+      if (p <= 0) return;
+      const hl = it.highlight;
+      ctx.save();
+      ctx.globalAlpha *= clamp(p * 1.5);
+      ctx.beginPath(); ctx.arc(xs[i], y, 22 * p, 0, Math.PI * 2); ctx.fillStyle = hl ? C.red : C.yellow; ctx.fill();
+      if (!THEME.chalk) { ctx.lineWidth = 6; ctx.strokeStyle = C.bg; ctx.stroke(); }
+      const above = i % 2 === 0;
+      pill(ctx, it.label, xs[i], above ? y - 90 : y + 90, { color: hl ? C.red : C.yellow, size: 26, filled: hl, textColor: hl ? C.white : undefined });
+      const lines = wrapWords(ctx, richWords(up(it.note ?? it.display ?? '')), Math.min(380, slot * 1.6), 34, 700);
+      lines.slice(0, 3).forEach((ln, li) => {
+        const lw = ln.length ? ln[ln.length - 1].x + ln[ln.length - 1].width : 0;
+        ln.forEach((wd) => { font(ctx, 34, 700); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = wd.em || hl ? C.yellow : C.white; ctx.fillText(wd.w, xs[i] - lw / 2 + wd.x, (above ? y - 160 - (lines.length - 1 - li) * 42 : y + 170 + li * 42)); });
+      });
+      ctx.restore();
+    });
+    caption(ctx, s, t, 1010, 1.2);
+  },
+
+  // ------------------------------------------------------------ indicador tipo velocímetro (cuota, % de uso)
+  meter(ctx, s, t) {
+    topTitle(ctx, s, t);
+    const f = fraction(s.value);
+    const cx = 960, cy = 760, r = 400;
+    const p = ease.out5(prog(t, 0.3, 1.4));
+    const v = f * p;
+    const bad = s.mood === 'negative';
+    ctx.save();
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = 70;
+    ctx.strokeStyle = C.bg2;
+    ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI, 2 * Math.PI); ctx.stroke();
+    // tramos: verde · amarillo · rojo (o al revés si "lleno es bueno")
+    const segs = bad ? [[0, 0.6, C.green], [0.6, 0.85, C.yellow], [0.85, 1, C.red]] : [[0, 1, C.yellow]];
+    for (const [a, b, col] of segs) {
+      const e = Math.min(b, v);
+      if (e <= a) continue;
+      ctx.strokeStyle = col;
+      ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI + a * Math.PI, Math.PI + e * Math.PI); ctx.stroke();
+    }
+    // marcas
+    ctx.lineWidth = 4; ctx.strokeStyle = C.grey;
+    for (let k = 0; k <= 10; k++) { const a = Math.PI + (k / 10) * Math.PI; ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * (r - 55), cy + Math.sin(a) * (r - 55)); ctx.lineTo(cx + Math.cos(a) * (r - 80), cy + Math.sin(a) * (r - 80)); ctx.stroke(); }
+    // aguja con un pequeño rebote
+    const wob = p >= 1 ? Math.sin(t * 9) * 0.004 : 0;
+    const a = Math.PI + (v + wob) * Math.PI;
+    ctx.strokeStyle = C.white; ctx.lineWidth = 12; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * (r - 100), cy + Math.sin(a) * (r - 100)); ctx.stroke();
+    ctx.fillStyle = C.white; ctx.beginPath(); ctx.arc(cx, cy, 26, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    const value = String(s.value ?? '');
+    const size = fitSize(ctx, value, 700, 150);
+    // el número sube a la vez que la aguja
+    const pct = /^\s*(\d+(?:[.,]\d+)?)\s*%\s*$/.exec(value);
+    const shown = pct ? `${Math.round(parseFloat(pct[1].replace(',', '.')) * p)}%` : rollText(up(value), prog(t, 0.3, 1.4), t);
+    headline(ctx, shown, cx, cy - 120, size, bad && f > 0.85 ? 'red' : 'yellow', 'center');
+    caption(ctx, s, t, 900, 1.2);
+  },
+
+  // ------------------------------------------------------------ ¿cabe en la memoria? (VRAM / RAM)
+  fit(ctx, s, t) {
+    topTitle(ctx, s, t, 150, 64);
+    const cap = parseFloat(String(s.value ?? s.sticker?.value ?? '24').replace(',', '.')) || 24;
+    const its = items(s).slice(0, 5);
+    const total = its.reduce((a, it) => a + (Number(it.value) || 0), 0);
+    const bx = 610, bw = 700, by = 290, bh = 600; // la "tarjeta"
+    const scale = bh / Math.max(cap, total); // si se desborda, que el exceso también quepa en pantalla
+    const capH = cap * scale;
+    const top = by + bh - capH;
+    // contenedor
+    ctx.save();
+    rrect(ctx, bx - 14, top - 14, bw + 28, capH + 28, 10);
+    ctx.lineWidth = 6; ctx.strokeStyle = C.white; ctx.stroke();
+    pill(ctx, `${up(s.lines?.[1]?.text || 'VRAM')} · ${cap} GB`, bx + bw / 2, top - 52, { color: C.white, size: 26 });
+    ctx.restore();
+    let acc = 0, overflowAt = null;
+    const palette = [C.blue, C.yellow, C.green, C.pink, C.orange];
+    its.forEach((it, i) => {
+      const v = Number(it.value) || 0;
+      const p = ease.out5(prog(t, at(i, 0.5 + i * 0.7), 0.6));
+      if (p <= 0) { acc += 0; return; }
+      const h = v * scale * p;
+      const y0 = by + bh - (acc * scale) - h;
+      const over = acc + v * p > cap;
+      if (over && overflowAt === null) overflowAt = at(i, 0.5 + i * 0.7) + 0.3;
+      // el tramo que no cabe, en rojo
+      const capLine = by + bh - capH;
+      ctx.fillStyle = palette[i % palette.length];
+      ctx.fillRect(bx, Math.max(y0, capLine), bw, Math.max(0, (by + bh - acc * scale) - Math.max(y0, capLine)));
+      if (y0 < capLine) { ctx.fillStyle = C.red; ctx.fillRect(bx, y0, bw, capLine - y0); }
+      ctx.fillStyle = C.bg; ctx.fillRect(bx, y0, bw, 4);
+      const label = `${up(it.label)} · ${it.display ?? `${v} GB`}`;
+      txt(ctx, label, bx + bw / 2, y0 + h / 2 + 2, { size: Math.min(40, Math.max(22, h * 0.45)), align: 'center', base: 'middle', color: C.ink, weight: 800, maxW: bw - 40 });
+      acc += v * p;
+    });
+    // veredicto
+    const allIn = its.length && t > at(its.length - 1, 0.5 + (its.length - 1) * 0.7) + 0.8;
+    if (allIn) {
+      const ok = total <= cap;
+      const pv = ease.back(prog(t, at(its.length - 1, 0.5 + (its.length - 1) * 0.7) + 0.8, 0.4));
+      ctx.save(); ctx.translate(1560, 560); ctx.rotate(-0.08); ctx.scale(pv, pv);
+      tag(ctx, ok ? 'CABE ✓' : 'NO CABE', 0, 0, { size: 70, fill: ok ? C.green : C.red, shadow: ok ? null : C.yellow });
+      ctx.restore();
+      ctx.save(); ctx.globalAlpha = clamp(pv);
+      txt(ctx, ok ? `sobran ${(cap - total).toFixed(1).replace('.', ',').replace(',0', '')} GB` : `faltan ${(total - cap).toFixed(1).replace('.', ',').replace(',0', '')} GB`, 1560, 660, { size: 30, family: MONO, color: C.grey, align: 'center' });
+      ctx.restore();
+    }
+    caption(ctx, s, t, 1010, 1.5);
+  },
+
+  // ------------------------------------------------------------ carrera de velocidad (tokens por segundo)
+  race(ctx, s, t) {
+    topTitle(ctx, s, t);
+    const its = items(s).slice(0, 4);
+    if (!its.length) return;
+    const max = Math.max(...its.map((i) => Number(i.value) || 0), 1);
+    const n = its.length;
+    const laneH = Math.min(150, 560 / n);
+    const y0 = 560 - (laneH * n) / 2 + 30;
+    const x0 = 520, x1 = 1660;
+    const start = 0.6, dur = 4; // el más rápido llega a la meta en 4 s
+    const el = Math.max(0, t - start);
+    // meta
+    ctx.save();
+    for (let k = 0; k < 16; k++) { ctx.fillStyle = k % 2 ? C.white : C.bg2; ctx.fillRect(x1 + 10, y0 - 20 + k * ((laneH * n + 20) / 16), 14, (laneH * n + 20) / 16); }
+    ctx.restore();
+    txt(ctx, `t = ${Math.min(el, 99).toFixed(1).replace('.', ',')} s`, 1720, y0 - 60, { size: 30, family: MONO, color: C.grey, align: 'right' });
+    its.forEach((it, i) => {
+      const y = y0 + i * laneH;
+      const v = Number(it.value) || 0;
+      const p = clamp((el * v) / (max * dur));
+      const hl = it.highlight || v === max;
+      pill(ctx, it.label, x0 - 30, y + laneH * 0.32, { color: hl ? C.yellow : C.grey, align: 'right', size: 26 });
+      ctx.fillStyle = C.bg2; ctx.fillRect(x0, y + laneH * 0.12, x1 - x0, laneH * 0.4);
+      // tokens: bloques que van apareciendo
+      const bwTok = 20, gap = 6;
+      const shown = Math.floor(((x1 - x0) * p) / (bwTok + gap));
+      ctx.fillStyle = hl ? C.yellow : C.blue;
+      for (let k = 0; k < shown; k++) ctx.fillRect(x0 + k * (bwTok + gap), y + laneH * 0.16, bwTok, laneH * 0.32);
+      const disp = it.display ?? `${v} TOK/S`;
+      if (p > 0.02) tag(ctx, rollText(up(disp), clamp(el / 1.2), t), Math.min(x1 - 10, x0 + (x1 - x0) * p) + 14, y + laneH * 0.32, { size: Math.min(38, laneH * 0.3), align: 'left', fill: hl ? C.yellow : C.white, shadow: hl ? C.red : null });
+    });
+    caption(ctx, s, t, 1010, 1);
+  },
 };
 
 export const SCENE_TYPES = Object.keys(SCENES);
@@ -564,6 +762,11 @@ export const SCENE_TEMPLATES = {
   analogy: { lines: [{ text: 'La cocina de un *restaurante*', color: 'white' }], items: [{ label: 'Encimera', display: 'VRAM', note: 'pequeña · rapidísima' }, { label: 'Despensa', display: 'RAM', note: 'mucho más · cada viaje cuesta' }, { label: 'Trastero', display: 'SSD', note: 'enorme · lento' }] },
   verdict: { lines: [{ text: 'NO MERECE', color: 'white' }, { text: 'LA PENA.', color: 'white' }], mood: 'negative', icon: 'mac', sticker: { label: '14 años de un plan de', value: '20 $' } },
   cta: { lines: [{ text: '¿Qué RAM y qué *gráfica* tenéis?', color: 'white' }], caption: 'Contádmelo en los comentarios' },
+  chat: { lines: [{ text: 'Se lo *pregunté*', color: 'white' }], items: [{ label: 'Tú', note: '¿Cuánta VRAM necesito para un modelo de 70B?' }, { label: 'IA', note: 'A 4 bits, unos *40 GB*. En una gráfica de 24 no cabe entero.', highlight: true }] },
+  timeline: { lines: [{ text: 'Un mes *de locos*', color: 'white' }], items: [{ label: '2 SEPT', note: 'Qwen 3.8' }, { label: '14 SEPT', note: 'DeepSeek V4.1' }, { label: '22 SEPT', note: 'Mac Mini M6', highlight: true }, { label: '29 SEPT', note: 'ChatGPT Pro 500' }] },
+  meter: { lines: [{ text: 'Cuota *gastada* en una tarde', color: 'white' }], value: '87%', mood: 'negative', caption: 'y solo es martes' },
+  fit: { lines: [{ text: '¿Cabe en tu *gráfica*?', color: 'white' }, { text: 'VRAM', color: 'white' }], value: '24 GB', items: [{ label: 'Modelo', value: 16, display: '16 GB' }, { label: 'Contexto', value: 6, display: '6 GB' }, { label: 'Sistema', value: 4, display: '4 GB' }] },
+  race: { lines: [{ text: 'Mismo modelo, *otro motor*', color: 'white' }], items: [{ label: 'llama.cpp', value: 15, display: '15 TOK/S' }, { label: 'Motor nuevo', value: 62, display: '62 TOK/S', highlight: true }] },
 };
 
 export function drawScene(ctx, scene, t, d, itemTimes = null) {

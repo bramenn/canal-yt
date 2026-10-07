@@ -2,8 +2,8 @@
 // Sin dependencias: node server.js  →  http://localhost:4321
 import http from 'node:http';
 import { spawn, execFile } from 'node:child_process';
-import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
-import { existsSync, copyFileSync, writeFileSync } from 'node:fs';
+import { readFile, writeFile, readdir, mkdir, stat, rename } from 'node:fs/promises';
+import { existsSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -12,10 +12,14 @@ import {
 } from './lib/prompts.js';
 import { studyChannel, listReferences, ANALYZE_SCHEMA, analyzePrompt } from './lib/study.js';
 import { findOverlaps, fixPrompt, applyFixes, FIX_SCHEMA } from './lib/originality.js';
+import { detectRedundancy, coherencePrompt, COHERENCE_SCHEMA } from './lib/coherence.js';
 import * as tts from './lib/tts/index.js';
 import * as sound from './lib/sound.js';
 import { readLexicon, saveLexicon, DEFAULT_LEXICON } from './lib/tts/lexicon.js';
 import * as aligner from './lib/align/index.js';
+import * as exporter from './lib/export.js';
+import * as audiofix from './lib/audiofix.js';
+import { createReadStream } from 'node:fs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -118,57 +122,110 @@ function runClaude({ prompt, schema, model, effort, variant, system, cwd = WORK,
   return () => { if (!child.killed) child.kill('SIGTERM'); };
 }
 
+/** runClaude como promesa: reenvía el progreso y resuelve con el evento 'result'. */
+function claudeStep(opts, emit, track) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const cancel = runClaude(opts, (ev) => {
+      if (ev.type === 'end') { if (!done) reject(new Error('Claude Code terminó sin resultado')); return; }
+      if (ev.type === 'result') { done = true; return resolve(ev); }
+      if (ev.type === 'error') { done = true; return reject(new Error(ev.message)); }
+      emit(ev);
+    });
+    track(cancel);
+  });
+}
+
+/** Editor de coherencia: quita explicaciones repetidas y une los segmentos en un hilo. Aplica los cambios a `video`. */
+async function coherenceStep(video, body, emit, track) {
+  const issues = detectRedundancy(video);
+  emit({ type: 'log', text: issues.length ? `🧭 Editor de coherencia · pistas: ${issues.map((x) => x.detail).slice(0, 4).join(' · ')}` : '🧭 Editor de coherencia: revisando que cada idea se explique una vez' });
+  const ev = await claudeStep({
+    prompt: coherencePrompt(video, issues, { targetWords: body.targetWords }),
+    schema: COHERENCE_SCHEMA,
+    model: body.editorModel || (body.targetWords ? 'opus' : 'sonnet'),
+    effort: body.targetWords ? 'high' : 'medium',
+    variant: body.variant,
+    tools: [],
+  }, emit, track);
+  const { map = [], changes = [], segments = [] } = ev.data ?? {};
+  for (const sg of segments) if (video.segments[sg.index] && sg.narration?.trim()) video.segments[sg.index].narration = sg.narration;
+  for (const m of map) if (video.segments[m.index]) video.segments[m.index].plan = { question: m.question, adds: m.adds, introduces: m.introduces };
+  for (const c of changes) emit({ type: 'log', text: `✂️  Segmento ${c.index + 1}: ${c.what}` });
+  emit({ type: 'log', text: changes.length ? `✅ Coherencia: ${segments.length} segmentos editados` : '✅ Coherencia: no hacía falta tocar nada' });
+  return { ev, changed: segments.map((x) => x.index), changes, issuesBefore: issues.length, issuesAfter: detectRedundancy(video).length };
+}
+
+/** Control de originalidad (frases demasiado parecidas a las referencias). Aplica los cambios a `video`. */
+async function originalityStep(video, body, emit, track) {
+  const overlaps = findOverlaps(video);
+  if (!overlaps.length) { emit({ type: 'log', text: '✅ Originalidad: ninguna frase copiada de las referencias' }); return null; }
+  emit({ type: 'log', text: `🧹 ${overlaps.length} frases demasiado parecidas a las referencias → reescribiendo con palabras propias` });
+  try {
+    const ev = await claudeStep({ prompt: fixPrompt(overlaps), schema: FIX_SCHEMA, model: 'sonnet', effort: 'low', variant: body.variant, tools: [] }, emit, track);
+    const n = applyFixes(video, overlaps, ev.data?.fixes);
+    const left = findOverlaps(video).length;
+    emit({ type: 'log', text: `✅ Reescritas ${n} frases${left ? ` (quedan ${left} con coincidencias menores)` : ''}` });
+    return ev;
+  } catch (e) {
+    emit({ type: 'log', text: `⚠️ No se pudo reescribir (${e.message.slice(0, 120)}); se entrega tal cual` });
+    return null;
+  }
+}
+
 /**
- * Guion en dos pasadas: 1) Claude Code investiga y escribe; 2) si hay frases demasiado parecidas
- * a las referencias (copia textual o frases-firma), una pasada rápida las reescribe con palabras propias.
+ * Guion: 1) Claude Code investiga y escribe; 2) editor de coherencia (una idea, una vez; hilo entre segmentos);
+ * 3) control de originalidad frente a las referencias.
  */
 function scriptJob(body, emit) {
   let cancel = () => {};
-  let finished = false;
-  const finish = (ev) => { if (!finished) { finished = true; emit(ev); emit({ type: 'end' }); } };
-
-  cancel = runClaude({
-    prompt: scriptPrompt(body),
-    schema: VIDEO_SCHEMA,
-    model: body.model || 'opus',
-    effort: body.effort || 'high',
-    variant: body.variant,
-    cwd: STYLE,
-    tools: ['WebSearch', 'WebFetch', 'Read', 'Glob'],
-  }, (ev) => {
-    if (ev.type === 'end') return; // lo cierra finish()
-    if (ev.type === 'error') return finish(ev);
-    if (ev.type !== 'result') return emit(ev);
-
-    const video = ev.data;
-    const overlaps = findOverlaps(video);
-    if (!overlaps.length) {
-      emit({ type: 'log', text: '✅ Originalidad: ninguna frase copiada de las referencias' });
-      return finish(ev);
+  const track = (c) => { cancel = c; };
+  (async () => {
+    const started = Date.now();
+    try {
+      const first = await claudeStep({
+        prompt: scriptPrompt(body),
+        schema: VIDEO_SCHEMA,
+        model: body.model || 'opus',
+        effort: body.effort || 'high',
+        variant: body.variant,
+        cwd: STYLE,
+        tools: ['WebSearch', 'WebFetch', 'Read', 'Glob'],
+      }, emit, track);
+      const video = first.data;
+      let cost = first.cost ?? 0;
+      try { const c = await coherenceStep(video, body, emit, track); cost += c.ev.cost ?? 0; }
+      catch (e) { emit({ type: 'log', text: `⚠️ El editor de coherencia falló (${e.message.slice(0, 100)}); sigo con el guion tal cual` }); }
+      const o = await originalityStep(video, body, emit, track);
+      cost += o?.cost ?? 0;
+      emit({ type: 'result', data: video, cost, secs: Math.round((Date.now() - started) / 1000) });
+    } catch (e) {
+      emit({ type: 'error', message: e.message });
+    } finally {
+      emit({ type: 'end' });
     }
-    emit({ type: 'log', text: `🧹 ${overlaps.length} frases demasiado parecidas a las referencias → reescribiendo con palabras propias` });
-    cancel = runClaude({
-      prompt: fixPrompt(overlaps),
-      schema: FIX_SCHEMA,
-      model: 'sonnet',
-      effort: 'low',
-      variant: body.variant,
-      tools: [],
-    }, (ev2) => {
-      if (ev2.type === 'end') return;
-      if (ev2.type === 'result') {
-        const n = applyFixes(video, overlaps, ev2.data?.fixes);
-        const left = findOverlaps(video).length;
-        emit({ type: 'log', text: `✅ Reescritas ${n} frases${left ? ` (quedan ${left} con coincidencias menores)` : ''}` });
-        return finish({ ...ev, cost: (ev.cost ?? 0) + (ev2.cost ?? 0), secs: Number(ev.secs) + Number(ev2.secs) });
-      }
-      if (ev2.type === 'error') {
-        emit({ type: 'log', text: `⚠️ No se pudo reescribir (${ev2.message.slice(0, 120)}); se entrega el guion tal cual` });
-        return finish(ev);
-      }
-      emit(ev2);
-    });
-  });
+  })();
+  return () => cancel();
+}
+
+/** Revisar coherencia de un guion ya hecho (botón del Estudio). */
+function coherenceJob(body, emit) {
+  let cancel = () => {};
+  const track = (c) => { cancel = c; };
+  (async () => {
+    const started = Date.now();
+    try {
+      const video = JSON.parse(JSON.stringify(body.video));
+      const c = await coherenceStep(video, body, emit, track);
+      let cost = c.ev.cost ?? 0;
+      if (c.changed.length) { const o = await originalityStep(video, body, emit, track); cost += o?.cost ?? 0; }
+      emit({ type: 'result', data: { segments: video.segments.map((s, i) => ({ index: i, narration: s.narration, plan: s.plan })), changed: c.changed, changes: c.changes, issuesBefore: c.issuesBefore, issuesAfter: c.issuesAfter }, cost, secs: Math.round((Date.now() - started) / 1000) });
+    } catch (e) {
+      emit({ type: 'error', message: e.message });
+    } finally {
+      emit({ type: 'end' });
+    }
+  })();
   return () => cancel();
 }
 
@@ -260,7 +317,15 @@ async function listProjects() {
   for (const f of files) {
     try {
       const p = JSON.parse(await readFile(path.join(PROJECTS, f), 'utf8'));
-      out.push({ id: p.id, title: p.video?.title ?? p.topic?.title ?? f, updated: p.updated, thumbnail: p.video?.thumbnail });
+      const segs = p.video?.segments ?? [];
+      const words = segs.reduce((n, sg) => n + String(sg.narration ?? '').split(/\s+/).filter(Boolean).length, 0);
+      const voiced = p.voice?.segments?.length ?? 0;
+      out.push({
+        id: p.id, title: p.video?.title ?? p.topic?.title ?? f, updated: p.updated, thumbnail: p.video?.thumbnail,
+        words, minutes: words / 180, segments: segs.length,
+        voice: voiced ? { provider: p.voice.provider, title: p.voice.voiceTitle, done: voiced, total: segs.length } : null,
+        published: !!p.publish, shorts: p.shorts?.clips?.length ?? (Array.isArray(p.shorts) ? p.shorts.length : 0),
+      });
     } catch {}
   }
   return out.sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0));
@@ -297,6 +362,12 @@ const server = http.createServer(async (req, res) => {
       return sse(res, (emit) => scriptJob(body, emit));
     }
 
+    // Editor de coherencia para un guion ya hecho
+    if (p === '/api/coherence' && req.method === 'POST') {
+      const body = await readBody(req);
+      return sse(res, (emit) => coherenceJob(body, emit));
+    }
+
     // Publicación: títulos que hablan con la miniatura, descripción, capítulos, etiquetas
     if (p === '/api/publish' && req.method === 'POST') {
       const body = await readBody(req);
@@ -327,7 +398,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/densify' && req.method === 'POST') {
       const body = await readBody(req);
       return sse(res, (emit) => runClaude({
-        prompt: densifyPrompt(body.video, body.indices),
+        prompt: densifyPrompt(body.video, body.indices, { instruction: String(body.instruction ?? '').slice(0, 600), durations: body.durations }),
         schema: DENSIFY_SCHEMA,
         model: body.model || 'sonnet',
         effort: 'medium',
@@ -394,8 +465,23 @@ const server = http.createServer(async (req, res) => {
           const file = path.normalize(path.join(tts.AUDIO_DIR, rel));
           return file.startsWith(tts.AUDIO_DIR) && existsSync(file) ? { index: sg.index, file, prompt: sg.spoken ?? '' } : null;
         }).filter(Boolean);
+        // forzar: se descarta la alineación guardada (p. ej. Whisper lo oyó mal) y se vuelve a escuchar
+        if (body.force) for (const it of items) rmSync(`${it.file}.words.json`, { force: true });
         aligner.align(items, (text) => emit({ type: 'log', text }), ctrl.signal)
           .then((data) => emit({ type: 'result', data: { segments: data }, secs: Math.round((Date.now() - started) / 1000) }))
+          .catch((e) => emit({ type: 'error', message: e.message }))
+          .finally(() => emit({ type: 'end' }));
+        return () => ctrl.abort();
+      });
+    }
+    // aberraciones del audio de un segmento: detectar (Whisper + análisis de la señal) y corregir sobre una copia
+    if ((p === '/api/audio/check' || p === '/api/audio/fix') && req.method === 'POST') {
+      const body = await readBody(req);
+      return sse(res, (emit) => {
+        const ctrl = new AbortController();
+        const log = (text) => emit({ type: 'log', text });
+        const job = p.endsWith('check') ? audiofix.check(body, log) : audiofix.fix(body, log, ctrl.signal);
+        job.then((data) => emit({ type: 'result', data }))
           .catch((e) => emit({ type: 'error', message: e.message }))
           .finally(() => emit({ type: 'end' }));
         return () => ctrl.abort();
@@ -456,6 +542,25 @@ const server = http.createServer(async (req, res) => {
         }
       } catch (e) { return sendJSON(res, 400, { error: e.message }); }
     }
+    // ---- Exportación de vídeo (WebCodecs en el navegador + ffmpeg aquí) ----
+    let ex;
+    if (p === '/api/export/start' && req.method === 'POST') return sendJSON(res, 200, await exporter.start());
+    if ((ex = p.match(/^\/api\/export\/([a-z0-9]+)\/(video|audio|finish|cancel)$/)) && req.method === 'POST') {
+      try {
+        if (ex[2] === 'finish') return sendJSON(res, 200, await exporter.finish(ex[1], await readBody(req)));
+        if (ex[2] === 'cancel') { await exporter.cancel(ex[1]); return sendJSON(res, 200, { ok: true }); }
+        return sendJSON(res, 200, await exporter.append(ex[1], ex[2], req));
+      } catch (e) { return sendJSON(res, 400, { error: e.message }); }
+    }
+    if (p.startsWith('/exports/')) {
+      const name = path.basename(decodeURIComponent(p.slice('/exports/'.length)));
+      const file = path.join(exporter.OUT_DIR, name);
+      if (!existsSync(file)) return sendJSON(res, 404, { error: 'not found' });
+      const st = await stat(file);
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': st.size, 'Content-Disposition': `attachment; filename="${name}"` });
+      return createReadStream(file).pipe(res);
+    }
+
     if (p.startsWith('/sounds/')) {
       try {
         const rel = decodeURIComponent(p.slice('/sounds/'.length));
@@ -478,9 +583,28 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/projects' && req.method === 'POST') {
       const project = await readBody(req);
       project.id = safeId(project.id || Date.now().toString(36));
+      const file = path.join(PROJECTS, `${project.id}.json`);
+      // otra pestaña (o una versión antigua) no puede pisar cambios más nuevos: el cliente envía la versión que conoce
+      if (!url.searchParams.get('force') && project.updated && existsSync(file)) {
+        try {
+          const disk = JSON.parse(await readFile(file, 'utf8'));
+          if (disk.updated && disk.updated !== project.updated) return sendJSON(res, 409, { error: 'conflict', updated: disk.updated });
+        } catch {}
+      }
       project.updated = Date.now();
-      await writeFile(path.join(PROJECTS, `${project.id}.json`), JSON.stringify(project, null, 2));
+      await writeFile(file, JSON.stringify(project, null, 2));
       return sendJSON(res, 200, { id: project.id, updated: project.updated });
+    }
+
+    // borrar = mover a projects/.papelera (recuperable a mano)
+    if (p.startsWith('/api/projects/') && req.method === 'DELETE') {
+      const id = safeId(decodeURIComponent(p.split('/').pop()));
+      const file = path.join(PROJECTS, `${id}.json`);
+      if (!existsSync(file)) return sendJSON(res, 404, { error: 'No existe' });
+      const bin = path.join(PROJECTS, '.papelera');
+      await mkdir(bin, { recursive: true });
+      await rename(file, path.join(bin, `${id}-${Date.now()}.json`));
+      return sendJSON(res, 200, { ok: true });
     }
 
     if (p.startsWith('/api/projects/') && req.method === 'GET') {

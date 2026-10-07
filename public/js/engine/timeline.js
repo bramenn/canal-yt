@@ -54,7 +54,10 @@ function matchHeard(keys, heard) {
     else j++;
   }
   const extra = heard.filter((_, k) => !used[k] && hk[k]).map((h) => ({ w: h.w, s: h.s, e: h.e, p: h.p }));
-  return { map, matched: map.filter(Boolean).length, extra };
+  // racha más larga de palabras del guion sin pareja: si es grande, la voz dijo otra cosa (audio roto)
+  let run = 0, maxRun = 0;
+  for (const m of map) { run = m ? 0 : run + 1; maxRun = Math.max(maxRun, run); }
+  return { map, matched: map.filter(Boolean).length, extra, maxRun };
 }
 
 const norm = (w) => w.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ]/g, '');
@@ -117,8 +120,8 @@ export function buildTimeline(video, { wpm = DEFAULT_WPM, segDurations = null, s
     let alignInfo = null;
     const heard = segAlign?.[si];
     if (audioDur > 0 && heard?.length && segWords.length) {
-      const { map, matched, extra } = matchHeard(segWords.map((w) => w.key), heard);
-      alignInfo = { ratio: matched / segWords.length, extra };
+      const { map, matched, extra, maxRun } = matchHeard(segWords.map((w) => w.key), heard);
+      alignInfo = { ratio: matched / segWords.length, extra, maxRun };
       if (matched / segWords.length >= 0.35) {
         let k = 0;
         while (k < segWords.length) {
@@ -180,10 +183,14 @@ export function buildTimeline(video, { wpm = DEFAULT_WPM, segDurations = null, s
       let from = firstWord;
       const itemInfo = [];
       const itemTimes = (Array.isArray(sc.items) ? sc.items : []).map((it) => {
-        const f = findCue(keys, it?.cue, from);
+        let f = findCue(keys, it?.cue, from);
+        // la frase puede nombrar los elementos en otro orden: se busca en todo el tramo de la escena
+        if (f.i < 0 && it?.cue) { const g = findCue(keys, it.cue, firstWord); if (g.i >= 0 && segWords[g.i].t0 < sEnd) f = g; }
+        // o justo antes de que entre la escena (se nombra al final de la escena anterior)
+        if (f.i < 0 && it?.cue) { const g = findCue(keys, it.cue, Math.max(0, firstWord - 25)); if (g.i >= 0 && segWords[g.i].t0 < sEnd) f = g; }
         itemInfo.push(f);
         if (f.i < 0 || segWords[f.i].t0 >= sEnd) return null;
-        from = f.i + 1;
+        from = Math.max(from, f.i + 1);
         return Math.max(0, segWords[f.i].t0 - sStart - 0.1);
       });
       scenes.push({ scene: sc, seg: si, idx: k, start: sStart, end: sEnd, itemTimes, cueInfo: cueInfo[k], itemInfo });
@@ -426,7 +433,9 @@ export class Player {
       }
       if (this.dirty) {
         this.dirty = false;
-        drawFrame(this.ctx, this.tl, this.t, this.opts);
+        // en pausa al principio, la intro aún no ha entrado y el lienzo parece vacío: mostrar la primera escena ya montada
+        const poster = !this.playing && this.t < 0.2 && this.tl.scenes?.length ? Math.min(1.5, this.tl.scenes[0].end - 0.05) : this.t;
+        drawFrame(this.ctx, this.tl, poster, this.opts);
         this.emit('time');
       }
       requestAnimationFrame(loop);

@@ -72,28 +72,49 @@
         <h2 class="mega small">TODAVÍA NO HAY <em>GUION</em><b>.</b></h2>
         <p class="lede">Genera uno desde <a href="#descubrir">Descubrir</a>, abre un proyecto o carga la demo para ver el motor de animación.</p>
         <button class="btn primary" id="load-demo">Cargar demo</button>
+        <div class="recent" id="recent"></div>
       </div>
 
       <div class="studio" id="studio" hidden>
+        <div class="conflict-bar" id="conflict-bar" hidden>
+          <span><b>Este proyecto se cambió en otra pestaña.</b> Para no perder trabajo, el autoguardado está en pausa.</span>
+          <button class="btn small primary" id="conflict-reload">Cargar la última versión</button>
+          <button class="btn small ghost" id="conflict-keep">Quedarme con esta</button>
+        </div>
         <div class="studio-bar">
-          <select id="title-select" class="title-select"></select>
-          <div class="spacer"></div>
-          <div class="seg-toggle" id="theme-toggle">
-            <button data-theme="infografia" class="on">Infografía</button>
-            <button data-theme="pizarra">Pizarra</button>
+          <div class="bar-row">
+            <select id="title-select" class="title-select" title="Título del vídeo (las alternativas que propuso Claude Code)"></select>
+            <div class="spacer"></div>
+            <span class="save-state" id="save-state"></span>
+            <button class="btn" id="save" title="Se guarda solo; esto fuerza un guardado (Ctrl+S)">Guardar</button>
+            <button class="btn" id="download-script" title="Descarga la narración en texto plano">Guion .txt</button>
+            <button class="btn" id="export-video" title="Renderiza el MP4 1920×1080 con voz, efectos y música">Exportar vídeo</button>
+            <a class="btn primary" href="#teleprompter" title="Lee el guion en el teleprompter y grábate con tu micrófono">Grabar voz <span class="arrow">→</span></a>
           </div>
-          <label class="check"><input type="checkbox" id="captions" /> Subtítulos</label>
-          <label class="check" title="Las palabras con *énfasis* aparecen como rótulo al decirse"><input type="checkbox" id="callouts" checked /> Rótulos</label>
-          <button class="btn" id="sync-all" title="Pone de acuerdo guion, voz y animación en todos los segmentos (recoloca anclas, regenera la voz desactualizada, alinea palabra a palabra)">Sincronizar todo</button>
-          <button class="btn" id="densify" title="Claude Code añade y sincroniza escenas para que la imagen siga a la voz (no toca la narración)">Más animación</button>
-          <label class="mini-field">ppm <input type="number" id="wpm" min="110" max="240" step="5" value="180" /></label>
-          <button class="btn voice-btn" id="open-sound"><span class="vdot"></span>Sonido</button>
-          <button class="btn voice-btn" id="open-voice"><span class="vdot"></span>Voz IA</button>
-          <label class="check" id="voice-toggle-wrap" hidden><input type="checkbox" id="voice-toggle" checked /> Usar voz IA</label>
-          <button class="btn" id="save">Guardar</button>
-          <button class="btn" id="export-video">Exportar vídeo</button>
-          <button class="btn" id="download-script">Guion .txt</button>
-          <a class="btn primary" href="#teleprompter">Grabar voz <span class="arrow">→</span></a>
+          <div class="bar-row">
+            <div class="tool-group"><span class="tg-label">Aspecto</span>
+              <div class="seg-toggle" id="theme-toggle">
+                <button data-theme="infografia" class="on" title="Gris oscuro, titulares con palabra clave amarilla">Infografía</button>
+                <button data-theme="pizarra" title="Trazo a mano sobre negro">Pizarra</button>
+                <button data-theme="editorial" title="Papel claro: noticias, polémicas, citas">Editorial</button>
+                <button data-theme="terminal" title="Neón monoespaciado: vídeos técnicos">Terminal</button>
+              </div>
+              <label class="check" title="Subtítulos quemados en el vídeo (por defecto no)"><input type="checkbox" id="captions" /> Subtítulos</label>
+              <label class="check" title="Las palabras con *énfasis* aparecen como rótulo al decirse"><input type="checkbox" id="callouts" checked /> Rótulos</label>
+            </div>
+            <div class="tool-group"><span class="tg-label">Guion e imagen</span>
+              <button class="btn" id="coherence" title="Claude Code edita el guion para que cada idea se explique una sola vez y cada segmento continúe al anterior (no añade datos)">Revisar coherencia</button>
+              <button class="btn ghost" id="coherence-undo" hidden title="Vuelve al texto de antes de la última revisión de coherencia">Deshacer revisión</button>
+              <button class="btn ghost" id="densify" title="Reanima TODOS los segmentos a la vez. Para uno solo: selecciónalo y usa «Más animación aquí» en el paso ②">Animar todo…</button>
+            </div>
+            <div class="tool-group"><span class="tg-label">Audio</span>
+              <button class="btn voice-btn" id="open-voice" title="Elegir y generar la voz con IA (Fish Audio o ElevenLabs)"><span class="vdot"></span>Voz IA</button>
+              <label class="check" id="voice-toggle-wrap" hidden title="Desmárcalo para previsualizar sin la voz IA (p. ej. si vas a grabar tú)"><input type="checkbox" id="voice-toggle" checked /> Usar</label>
+              <button class="btn voice-btn" id="open-sound" title="Efectos de sonido y música de fondo"><span class="vdot"></span>Sonido</button>
+              <button class="btn" id="sync-all" title="Pone de acuerdo guion, voz y animación en todos los segmentos (recoloca anclas, regenera la voz desactualizada, alinea palabra a palabra)">Sincronizar todo</button>
+              <label class="mini-field" id="wpm-wrap" title="Velocidad estimada de lectura (palabras por minuto). Solo se usa si no hay voz IA">ppm <input type="number" id="wpm" min="110" max="240" step="5" value="180" /></label>
+            </div>
+          </div>
         </div>
 
         <div class="studio-grid">
@@ -108,6 +129,7 @@
             <div class="timeline" id="timeline"></div>
             <button class="pace" id="pace" type="button"></button>
             <div class="now-reading" id="now-reading"></div>
+            <p class="keys"><kbd>Espacio</kbd> reproducir · <kbd>←</kbd><kbd>→</kbd> 5 s · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> segmento · <kbd>Inicio</kbd> al principio · <kbd>Ctrl</kbd>+<kbd>S</kbd> guardar · clic en la barra de segmentos para saltar</p>
           </div>
 
           <aside class="inspector">
@@ -147,6 +169,14 @@
                 <label class="field"><span>Tipo</span><select id="scene-type"></select></label>
                 <label class="field grow"><span>Aparece en la frase (cue)</span><input id="scene-cue" /></label>
               </div>
+              <details class="obj-gallery" id="obj-gallery">
+                <summary>Objetos y logos <span class="muted">— elige uno y se pone en la escena</span></summary>
+                <div class="row tight">
+                  <input id="obj-q" placeholder="Buscar: dinero, lento, openai, voz…" />
+                  <select id="obj-target" title="Dónde ponerlo"></select>
+                </div>
+                <div class="obj-grid" id="obj-grid"></div>
+              </details>
               <label class="field"><span>Propiedades (JSON)</span><textarea id="scene-props" rows="14" spellcheck="false" class="mono"></textarea></label>
               <p class="err" id="scene-err"></p>
               <div class="row tight">

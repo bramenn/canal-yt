@@ -1,10 +1,15 @@
 import { getJSON, postJSON, stream } from './api.js';
 import { Player, buildTimeline, segmentAt, sceneAt, wordAt, sectionColor, DEFAULT_WPM } from './engine/timeline.js';
 import { SCENE_TYPES, SCENE_TEMPLATES } from './engine/scenes.js';
-import { ICON_NAMES } from './engine/draw.js';
+import { ICON_NAMES, icon as drawIcon } from './engine/draw.js';
+import { OBJECT_INFO, OBJECT_NAMES } from './engine/object-list.js';
+import { LOGOS, LOGO_IDS } from './engine/logos.js';
+import { preloadLogos } from './engine/logos.js';
 import { drawThumb, thumbToPNG, THUMB_DEFAULT } from './engine/thumbnail.js';
 import { Teleprompter, Recorder, extOf } from './teleprompter.js';
 import { drawShort, sentencesOf, clipRange, SW, SH } from './engine/shorts.js';
+import { exportVideo, canExportFast, downloadUrl } from './exporter.js';
+import { drawFrame } from './engine/timeline.js';
 import { Mixer, DEFAULT_MIX, DENSITY, sfxEvents } from './engine/audio.js';
 
 // ---------- utilidades ----------
@@ -49,6 +54,8 @@ const state = {
 
 const canvas = document.createElement('canvas');
 const player = new Player(canvas);
+// los logos se dibujan como imágenes: al terminar de cargarlos, repintar
+preloadLogos().then(() => { player.render(); try { if (state.project) redrawThumb(); } catch {} });
 const tp = new Teleprompter($('#prompter'), $('#prompter-inner'));
 const mixer = new Mixer();
 player.setMixer(mixer);
@@ -76,7 +83,7 @@ async function runJob(title, url, body) {
   job = ctrl;
   $('#engine-cancel').textContent = 'Cancelar';
   $('#engine-cancel').onclick = () => ctrl.abort();
-  add('▶ Lanzando Claude Code…');
+  add(/^\/api\/(audio|align|tts|export)/.test(url) ? '▶ Empezando…' : '▶ Lanzando Claude Code…');
   try {
     const res = await stream(url, body, (ev) => {
       if (ev.type === 'log') add(ev.text);
@@ -249,19 +256,75 @@ $('#script-dialog').addEventListener('close', async () => {
 });
 
 // ---------- 02 · ESTUDIO ----------
-const saveSoon = debounce(() => state.project && saveProject(state.project, true), 1200);
+// ---- guardado: automático, con estado visible y protección contra pisar cambios de otra pestaña ----
+const saveState = { pending: false, saving: false, conflict: false, last: 0 };
+function showSaveState(err) {
+  const el = $('#save-state');
+  if (!el) return;
+  el.className = 'save-state';
+  if (saveState.conflict) { el.textContent = '⚠ Conflicto'; el.classList.add('bad'); el.title = 'Este proyecto se cambió en otra pestaña'; }
+  else if (err) { el.textContent = '⚠ Sin guardar'; el.classList.add('bad'); el.title = err; }
+  else if (saveState.saving || saveState.pending) { el.textContent = 'Guardando…'; el.title = ''; }
+  else if (saveState.last) { el.textContent = `✓ Guardado ${new Date(saveState.last).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`; el.classList.add('ok'); el.title = 'Se guarda solo al cambiar algo (Ctrl+S para forzar)'; }
+  else el.textContent = '';
+}
+const saveDebounced = debounce(() => state.project && saveProject(state.project, true), 1200);
+const saveSoon = () => { if (!state.project) return; saveState.pending = true; showSaveState(); saveDebounced(); };
 
-async function saveProject(p, quiet = false) {
+async function saveProject(p, quiet = false, { force = false } = {}) {
+  if (saveState.conflict && !force) { showConflict(); return; }
+  saveState.saving = true; saveState.pending = false; showSaveState();
   try {
-    const r = await postJSON('/api/projects', p);
+    const r = await postJSON(`/api/projects${force ? '?force=1' : ''}`, p);
     p.id = r.id;
+    p.updated = r.updated;
+    saveState.last = Date.now(); saveState.conflict = false;
+    if (state.project === p) store.set('lastProject', p.id);
     if (!quiet) toast('Proyecto guardado');
-  } catch (e) { toast(`No se pudo guardar: ${e.message}`); }
+    saveState.saving = false; showSaveState();
+  } catch (e) {
+    saveState.saving = false;
+    if (e.status === 409) { saveState.conflict = true; showSaveState(); showConflict(); return; }
+    showSaveState(e.message);
+    toast(`No se pudo guardar: ${e.message}`);
+  }
+}
+
+/** Otra pestaña (o una versión antigua) guardó este proyecto: el usuario decide cuál vale. */
+function showConflict() {
+  const bar = $('#conflict-bar');
+  bar.hidden = false;
+  $('#conflict-reload').onclick = async () => {
+    bar.hidden = true; saveState.conflict = false;
+    openProject(await getJSON(`/api/projects/${encodeURIComponent(state.project.id)}`));
+    toast('Cargada la última versión guardada');
+  };
+  $('#conflict-keep').onclick = async () => {
+    if (!confirm('¿Sobrescribir la versión guardada con la de esta pestaña? Los cambios hechos en la otra se perderán.')) return;
+    bar.hidden = true; saveState.conflict = false;
+    await saveProject(state.project, false, { force: true });
+  };
+}
+
+window.addEventListener('beforeunload', (e) => { if (saveState.pending || saveState.saving) { e.preventDefault(); e.returnValue = ''; } });
+
+// aviso si el mismo proyecto está abierto en otra pestaña
+const tabsChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('bramenn-studio') : null;
+if (tabsChannel) {
+  tabsChannel.onmessage = ({ data }) => {
+    if (!state.project?.id || data?.id !== state.project.id) return;
+    if (data.type === 'open') { tabsChannel.postMessage({ type: 'here', id: data.id }); }
+    if (data.type === 'open' || data.type === 'here') toast('Ojo: este proyecto también está abierto en otra pestaña. Trabaja solo en una.', 6000);
+  };
 }
 
 function openProject(p) {
   p.settings = { wpm: DEFAULT_WPM, theme: 'infografia', captions: false, channel: 'bramenn', ...(p.settings ?? {}) };
   state.project = p;
+  saveState.conflict = false; saveState.pending = false; saveState.last = p.updated || 0;
+  $('#conflict-bar').hidden = true;
+  showSaveState();
+  if (p.id && p.updated) { store.set('lastProject', p.id); tabsChannel?.postMessage({ type: 'open', id: p.id }); }
   state.seg = 0;
   state.scene = 0;
   state.thumbIdx = 0;
@@ -270,6 +333,7 @@ function openProject(p) {
   $('#wpm').value = p.settings.wpm;
   $('#captions').checked = p.settings.captions;
   $('#callouts').checked = p.settings.callouts !== false;
+  $('#coherence-undo').hidden = !p.undoCoherence;
   $$('#theme-toggle button').forEach((b) => b.classList.toggle('on', b.dataset.theme === p.settings.theme));
   player.setOpts({ captions: p.settings.captions, callouts: p.settings.callouts !== false, theme: p.settings.theme, channel: p.settings.channel });
   player.seek(0);
@@ -290,6 +354,8 @@ function rebuild() {
   mixer.setVoiceWords(segAlign);
   player.load(state.project.video, { wpm: Number(state.project.settings.wpm) || DEFAULT_WPM, segDurations: voiceDurations(), segAlign });
   updateVoiceBadge();
+  // con voz IA la duración la marca el audio: el ppm no se usa
+  $('#wpm-wrap').hidden = !!voiceDurations();
   updatePace();
   renderSegSteps();
   renderTimelineStrip();
@@ -365,17 +431,22 @@ function renderSegSteps() {
   const tlSeg = player.tl.segments[i];
   const animState = st.still > 6.5 ? 'warn' : 'ok';
   const sync = syncState(i);
-  const sus = suspiciousWords(i);
+  const sus = (state.audioCheck?.[i]?.issues ?? []).filter((x) => x.kind === 'doubt');
+  autoCheckAudio(i);
   box.innerHTML = `
     <div class="step sync ${sync.ok ? 'ok' : 'warn'}"><i>⟳</i><div><b>${sync.ok ? 'Sincronizado' : 'Desincronizado'}</b><small>${sync.ok ? 'guion, voz y animación coinciden' : sync.issues.join(' · ')}</small></div>
       <div class="acts">${sync.ok ? '' : '<button class="btn small" data-step="sync">Sincronizar segmento</button>'}</div></div>
-    <div class="step ${st.d.issues.length ? 'warn' : 'ok'}"><i>①</i><div><b>Guion</b><small>${st.words} palabras · ${st.d.issues.length ? st.d.issues.join(', ') : 'didáctica ✓'}</small></div>
+    <div class="step ${st.d.issues.length ? 'warn' : 'ok'}"><i>①</i><div><b>Guion</b><small>${st.words} palabras · ${st.d.issues.length ? st.d.issues.join(', ') : 'didáctica ✓'}</small>${state.project.video.segments[i].plan ? `<small class="plan">Responde: ${esc(state.project.video.segments[i].plan.question)}<br>Aporta: ${esc(state.project.video.segments[i].plan.adds)}</small>` : ''}</div>
       <div class="acts"><button class="btn small ghost" data-step="didactic">Más didáctico</button><button class="btn small ghost" data-step="rewrite">Reescribir…</button></div></div>
-    <div class="step ${animState}"><i>②</i><div><b>Animación</b><small>${st.scenes} escenas · ${st.synced} momentos sincronizados con la voz · quieto como máximo ${st.still.toFixed(1)} s${animState === 'warn' ? ' → anímalo' : ''}</small></div>
-      <div class="acts"><button class="btn small ${animState === 'warn' ? '' : 'ghost'}" data-step="animate">Animar este segmento</button><button class="btn small ghost" data-step="watch">▶ Ver</button></div></div>
-    <div class="step ${st.voice}"><i>③</i><div><b>Voz</b><small>${voiceHealth(i)?.broken ? (() => { const h = voiceHealth(i); return `⚠️ la voz falló: dice ${h.heard} de ${h.expectedWords} palabras y dura ${h.dur.toFixed(0)} s (se atascó o emitió sonidos sin palabras) → Regenerar`; })() : !v?.voiceId ? 'sin voz elegida' : st.voice === 'todo' ? `sin generar · ${esc(v.voiceTitle || PROVIDER_UI[v.provider]?.name || 'voz IA')}` : st.voice === 'warn' ? 'desactualizada (cambió el texto o la voz)' : `al día · ${esc(v.voiceTitle || PROVIDER_UI[v.provider]?.name || 'voz IA')} · ${tlSeg ? (tlSeg.end - tlSeg.start).toFixed(1) : '?'} s · ${tlSeg?.align ? 'sincronizada palabra a palabra ✓' : 'tiempos estimados'}`}</small></div>
-      ${sus.length ? `<div class="sus">Puede que suene mal: ${sus.map((x) => `<button type="button" data-at="${x.s}" title="Escuchar ese momento">«${esc(x.w)}» ${x.s.toFixed(0)} s</button>`).join(' ')} <small>→ corrígelo en Voz IA → Pronunciación y regenera</small></div>` : ''}
-      <div class="acts">${v?.voiceId ? `<button class="btn small ${st.voice === 'ok' ? 'ghost' : ''}" data-step="voice">${st.voice === 'ok' ? 'Regenerar voz' : 'Generar voz'}</button>` : '<button class="btn small" data-step="pickvoice">Elegir voz…</button>'}${st.voice !== 'todo' ? '<button class="btn small ghost" data-step="listen">▶ Escuchar</button>' : ''}${sus.length && (v?.settings?.temperature ?? 0.7) > 0.8 ? '<button class="btn small" data-step="calm" title="Con expresividad alta el modelo inventa titubeos y sonidos raros. Esto la baja a 0,6 para toda la voz del proyecto y regenera este segmento.">Regenerar con expresividad 0,6</button>' : ''}</div></div>`;
+    <div class="step ${animState}"><i>②</i><div><b>Animación</b><small>${st.scenes} escenas · ${st.synced} momentos sincronizados con la voz · quieto como máximo ${st.still.toFixed(1)} s${animState === 'warn' ? ' → anímalo' : ''}</small>
+      <div class="anim-ask">
+        <input data-step="anim-ask" placeholder="Pídele algo (opcional): una carrera de velocidades, el logo de OpenAI, una escena por cifra…" value="${esc(state.animAsk?.[i] ?? '')}" />
+        <div class="anim-chips">${ANIM_CHIPS.map(([l, v]) => `<button type="button" data-chip="${esc(v)}">${esc(l)}</button>`).join('')}</div>
+      </div></div>
+      <div class="acts"><button class="btn small ${animState === 'warn' ? '' : 'ghost'}" data-step="animate" title="Claude Code añade y mejora escenas solo en este segmento (no toca la narración)">Más animación aquí</button>${state.project.video.segments[i].prevScenes ? '<button class="btn small ghost" data-step="anim-undo" title="Vuelve a las escenas de antes de la última animación">Deshacer</button>' : ''}<button class="btn small ghost" data-step="watch">▶ Ver</button></div></div>
+    <div class="step ${st.voice}"><i>③</i><div><b>Voz</b><small>${voiceHealth(i)?.broken ? (() => { const h = voiceHealth(i); return `⚠️ la voz falló: ${(player.tl.segments[i]?.align?.maxRun ?? 0) >= 8 ? `hay ${player.tl.segments[i].align.maxRun} palabras seguidas del guion que no dice (dijo otra cosa)` : `dice ${h.heard} de ${h.expectedWords} palabras y dura ${h.dur.toFixed(0)} s`} → Regenerar`; })() : !v?.voiceId ? 'sin voz elegida' : st.voice === 'todo' ? `sin generar · ${esc(v.voiceTitle || PROVIDER_UI[v.provider]?.name || 'voz IA')}` : st.voice === 'warn' ? 'desactualizada (cambió el texto o la voz)' : `al día · ${esc(v.voiceTitle || PROVIDER_UI[v.provider]?.name || 'voz IA')} · ${tlSeg ? (tlSeg.end - tlSeg.start).toFixed(1) : '?'} s · ${tlSeg?.align ? 'sincronizada palabra a palabra ✓' : 'tiempos estimados'}`}</small></div>
+      ${audioCheckHtml(i)}
+      <div class="acts">${v?.voiceId ? `<button class="btn small ${st.voice === 'ok' ? 'ghost' : ''}" data-step="voice">${st.voice === 'ok' ? 'Regenerar voz' : 'Generar voz'}</button>` : '<button class="btn small" data-step="pickvoice">Elegir voz…</button>'}${st.voice !== 'todo' ? '<button class="btn small ghost" data-step="listen">▶ Escuchar</button>' : ''}${voiceHealth(i)?.broken ? '<button class="btn small" data-step="relisten" title="A veces el audio está bien y es Whisper el que lo oyó mal. Volver a escucharlo es gratis; regenerar gasta créditos.">Volver a escuchar (gratis)</button>' : ''}${st.voice !== 'todo' ? '<button class="btn small ghost" data-step="acheck" title="Busca fallos en este audio: partes que se salta o dice mal, gemidos, clics, respiraciones fuertes, saltos de volumen y pausas largas">Revisar audio</button>' : ''}${voiceOf()?.segments.find((x) => x.index === i)?.undoFix ? '<button class="btn small ghost" data-step="acheck-undo" title="Vuelve al audio de antes de la última corrección">Deshacer corrección</button>' : ''}${sus.length && (v?.settings?.temperature ?? 0.7) > 0.8 ? '<button class="btn small" data-step="calm" title="Con expresividad alta el modelo inventa titubeos y sonidos raros. Esto la baja a 0,6 para toda la voz del proyecto y regenera este segmento.">Regenerar con expresividad 0,6</button>' : ''}</div></div>`;
   box.querySelector('[data-step=sync]')?.addEventListener('click', () => syncSegments([i]));
   box.querySelector('[data-step=calm]')?.addEventListener('click', async () => {
     const choice = currentVoiceChoice();
@@ -393,15 +464,152 @@ function renderSegSteps() {
   box.querySelectorAll('[data-at]').forEach((b) => { b.onclick = () => { const seg = player.tl.segments[i]; player.pause(); player.seek(seg.start + Math.max(0, Number(b.dataset.at) - 1.2)); state.stopAt = seg.start + Number(b.dataset.at) + 2; player.play(); }; });
   box.querySelector('[data-step=didactic]').onclick = () => $('#refine-didactic').click();
   box.querySelector('[data-step=rewrite]').onclick = () => $('#refine-instruction').focus();
-  box.querySelector('[data-step=animate]').onclick = () => animateSegments([i]);
+  const ask = box.querySelector('[data-step=anim-ask]');
+  const animate = () => animateSegments([i], { instruction: ask.value.trim() });
+  box.querySelector('[data-step=animate]').onclick = animate;
+  ask.addEventListener('input', () => { (state.animAsk ??= {})[i] = ask.value; });
+  ask.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); animate(); } });
+  box.querySelectorAll('[data-chip]').forEach((b) => {
+    b.onclick = () => { ask.value = ask.value.trim() ? `${ask.value.trim()}; ${b.dataset.chip}` : b.dataset.chip; (state.animAsk ??= {})[i] = ask.value; ask.focus(); };
+  });
+  box.querySelector('[data-step=anim-undo]')?.addEventListener('click', () => {
+    const seg = state.project.video.segments[i];
+    if (!seg.prevScenes) return;
+    seg.scenes = seg.prevScenes;
+    delete seg.prevScenes;
+    rebuild(); selectSegment(i); saveSoon();
+    toast(`Segmento ${i + 1}: escenas de antes recuperadas`);
+  });
   box.querySelector('[data-step=watch]').onclick = () => playSegment(i);
   box.querySelector('[data-step=listen]')?.addEventListener('click', () => playSegment(i));
+  box.querySelector('[data-step=acheck]')?.addEventListener('click', () => checkAudio(i));
+  box.querySelector('[data-step=relisten]')?.addEventListener('click', async () => {
+    try {
+      await alignSegments([i], { force: true, quiet: true });
+      toast(voiceHealth(i)?.broken ? `Segmento ${i + 1}: sigue sonando mal también al volver a escucharlo → regenera la voz o usa «Revisar audio»` : `Segmento ${i + 1}: el audio estaba bien, era Whisper. Re-sincronizado gratis ✓`, 7000);
+    } catch {}
+  });
+  box.querySelector('[data-step=acheck-undo]')?.addEventListener('click', () => undoAudioFix(i));
+  box.querySelectorAll('[data-aplay]').forEach((b) => { b.onclick = () => playAudioRange(i, Number(b.dataset.t0), Number(b.dataset.t1)); });
+  box.querySelectorAll('[data-aid]').forEach((c) => { c.onchange = () => { const r = state.audioCheck?.[i]; const it = r?.issues.find((x) => x.id === Number(c.dataset.aid)); if (it) { it.on = c.checked; renderSegSteps(); } }; });
+  box.querySelector('[data-step=afix]')?.addEventListener('click', () => fixAudio(i));
+  box.querySelectorAll('[data-arepair]').forEach((b) => { b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); fixAudio(i, [Number(b.dataset.arepair)]); }; });
   box.querySelector('[data-step=pickvoice]')?.addEventListener('click', () => $('#open-voice').click());
   box.querySelector('[data-step=voice]')?.addEventListener('click', async () => {
     const choice = currentVoiceChoice();
     if (!choice) return $('#open-voice').click();
     try { await generateVoice([i], choice); playSegment(i); } catch {}
   });
+}
+
+// ---- aberraciones del audio de voz (por segmento) ----
+const FIX_TEXT = { regen: 'regenerar ese trozo', mute: 'silenciar', soften: 'atenuar', declick: 'quitar el clic', level: 'nivelar el volumen', shorten: 'acortar la pausa' };
+
+function audioCheckHtml(i) {
+  const r = state.audioCheck?.[i];
+  const vs = voiceOf()?.segments.find((x) => x.index === i);
+  if (!r || !vs || r.url !== vs.url) return '';
+  if (!r.issues.length) return '<div class="acheck ok">✓ Audio revisado: no encontré fallos (texto, gemidos, clics, volumen ni pausas).</div>';
+  const sel = r.issues.filter((x) => x.on);
+  const regen = [...new Set(sel.filter((x) => x.fix === 'regen').map((x) => x.chunk))];
+  const chars = regen.reduce((n, k) => n + (r.chunks[k]?.chars ?? 0), 0);
+  const rows = r.issues.map((x) => `<label class="arow ${x.auto ? '' : 'review'}${x.kind === 'doubt' ? ' word' : ''}">
+      <input type="checkbox" data-aid="${x.id}" ${x.on ? 'checked' : ''} />
+      <button type="button" class="aplay" data-aplay data-t0="${x.t0}" data-t1="${x.t1}" title="Escuchar ese momento">▶ ${x.t0.toFixed(1)} s</button>
+      <span><b>${esc(x.label)}</b> · ${esc(x.detail)}<small>→ ${FIX_TEXT[x.fix]}${x.fix === 'regen' ? ` ${x.chunk + 1}/${r.chunks.length}` : ''}${x.auto ? '' : ' · escúchalo antes'}</small></span>
+      <button type="button" class="btn small arepair" data-arepair="${x.id}" title="${x.fix === 'regen' ? 'Regenera solo el trozo donde está (gasta unos pocos créditos)' : 'Lo arregla ya, sin gastar créditos'}">Reparar</button>
+    </label>`).join('');
+  return `<div class="acheck"><div class="ahead"><b>${r.issues.length} posible${r.issues.length > 1 ? 's' : ''} fallo${r.issues.length > 1 ? 's' : ''}</b><small>Marcados por defecto los seguros; los dudosos, escúchalos con ▶.</small></div>${rows}
+    <div class="afoot"><button class="btn small" data-step="afix" ${sel.length ? '' : 'disabled'}>Corregir ${sel.length} marcado${sel.length === 1 ? '' : 's'}</button>
+    <small>${regen.length ? `regenera ${regen.length} trozo${regen.length > 1 ? 's' : ''} (~${chars} caracteres de ${esc(PROVIDER_UI[voiceOf()?.provider]?.name ?? 'voz IA')}); ` : ''}${sel.some((x) => x.fix !== 'regen') ? 'el resto se arregla sin gastar créditos' : ''}${sel.length ? ' · el original se guarda para deshacer' : ''}</small></div></div>`;
+}
+
+/** Reproduce un tramo del audio de un segmento (con un poco de margen). */
+function playAudioRange(i, t0, t1) {
+  const seg = player.tl.segments[i];
+  if (!seg) return;
+  player.pause();
+  player.seek(seg.start + Math.max(0, t0 - 1));
+  state.stopAt = seg.start + t1 + 0.8;
+  player.play();
+}
+
+/** Revisa el audio del segmento en segundo plano (sin panel) la primera vez que se abre. Es rápido: la alineación ya está. */
+function autoCheckAudio(i) {
+  const vs = voiceOf()?.segments.find((x) => x.index === i);
+  if (!vs?.url || vs.alignedUrl !== vs.url || !state.aligner.available) return;
+  const done = state.audioCheck?.[i];
+  if (done?.url === vs.url) return;
+  (state.autoChecking ??= {});
+  if (state.autoChecking[i] === vs.url) return;
+  state.autoChecking[i] = vs.url;
+  const url = vs.url;
+  stream('/api/audio/check', { url, spoken: vs.spoken ?? state.project.video.segments[i].narration, index: i }, () => {})
+    .then((res) => {
+      const r = res?.data ?? res;
+      if (!r?.issues || voiceOf()?.segments.find((x) => x.index === i)?.url !== url) return;
+      r.url = url;
+      r.issues.forEach((x) => { x.on = x.auto; });
+      (state.audioCheck ??= {})[i] = r;
+      if (r.realigned) { vs.words = r.realigned; vs.alignedUrl = vs.url; rebuild(); saveSoon(); }
+      if (state.seg === i) renderSegSteps();
+    })
+    .catch(() => {})
+    .finally(() => { if (state.autoChecking[i] === url) delete state.autoChecking[i]; });
+}
+
+async function checkAudio(i, { quiet = false } = {}) {
+  const vs = voiceOf()?.segments.find((x) => x.index === i);
+  if (!vs?.url) return toast('Este segmento aún no tiene voz');
+  try {
+    const r = await runJob(`Revisando el audio · segmento ${i + 1}`, '/api/audio/check', { url: vs.url, spoken: vs.spoken ?? state.project.video.segments[i].narration, index: i });
+    r.url = vs.url;
+    r.issues.forEach((x) => { x.on = x.auto; });
+    (state.audioCheck ??= {})[i] = r;
+    if (r.realigned) { vs.words = r.realigned; vs.alignedUrl = vs.url; rebuild(); saveSoon(); }
+    renderSegSteps();
+    if (!quiet) toast(r.issues.length ? `Segmento ${i + 1}: ${r.issues.length} posibles fallos (mira el paso ③)` : `Segmento ${i + 1}: audio limpio ✓`);
+  } catch {}
+}
+
+async function fixAudio(i, ids = null) {
+  const r = state.audioCheck?.[i];
+  const v = voiceOf();
+  const vs = v?.segments.find((x) => x.index === i);
+  if (!r || !vs) return;
+  const sel = ids ? r.issues.filter((x) => ids.includes(x.id)) : r.issues.filter((x) => x.on);
+  if (!sel.length) return;
+  const regen = new Set(sel.filter((x) => x.fix === 'regen').map((x) => x.chunk));
+  if (regen.size && !confirm(`Se regenerará${regen.size > 1 ? 'n' : ''} ${regen.size} trozo${regen.size > 1 ? 's' : ''} de este segmento con ${PROVIDER_UI[v.provider]?.name ?? 'la voz IA'} (gasta créditos). ¿Seguir?`)) return;
+  try {
+    const out = await runJob(`Corrigiendo el audio · segmento ${i + 1}`, '/api/audio/fix', {
+      url: vs.url, spoken: vs.spoken ?? state.project.video.segments[i].narration, index: i,
+      issues: sel, voice: { provider: v.provider, voiceId: v.voiceId, settings: v.settings },
+    });
+    vs.undoFix = { url: vs.url, words: vs.words, alignedUrl: vs.alignedUrl, undoFix: vs.undoFix ?? null };
+    vs.url = out.url;
+    delete state.audioCheck[i];
+    await loadVoice();
+    await alignSegments([i], { quiet: true }); // tiempos nuevos → la animación sigue a la voz corregida
+    saveSoon();
+    await checkAudio(i, { quiet: true }); // comprobación: ¿queda algo?
+    const left = state.audioCheck?.[i]?.issues.length ?? 0;
+    toast(`Audio corregido (${sel.length} arreglo${sel.length > 1 ? 's' : ''}${out.regenerated ? ` · ${out.regenerated} trozo regenerado` : ''}) · ${left ? `quedan ${left} avisos por revisar` : 'revisado de nuevo: limpio ✓'}. Escúchalo; si no te convence, «Deshacer corrección».`, 8000);
+    playSegment(i);
+  } catch {}
+}
+
+async function undoAudioFix(i) {
+  const vs = voiceOf()?.segments.find((x) => x.index === i);
+  const u = vs?.undoFix;
+  if (!u) return;
+  vs.url = u.url; vs.words = u.words; vs.alignedUrl = u.alignedUrl; vs.undoFix = u.undoFix;
+  if (!vs.undoFix) delete vs.undoFix;
+  if (state.audioCheck) delete state.audioCheck[i];
+  await loadVoice();
+  saveSoon();
+  renderSegSteps();
+  toast(`Segmento ${i + 1}: audio de antes recuperado`);
 }
 
 /** Reproduce solo un segmento y se para al terminar. */
@@ -414,23 +622,42 @@ function playSegment(i) {
   player.play();
 }
 
-/** Claude Code reanima solo estos segmentos (no toca la narración). */
-async function animateSegments(indices) {
+// sugerencias de un clic para pedir animación en un segmento
+const ANIM_CHIPS = [
+  ['Más movimiento', 'más escenas y más elementos que entren al decirse, que nunca esté quieto más de 4 s'],
+  ['Una escena por cifra', 'cada cifra que se dice, en pantalla en su momento (stat, calc, compare)'],
+  ['Objetos y logos', 'usa objetos animados y los logos de las empresas que se nombran'],
+  ['Gráficas', 'muestra las comparaciones con gráficas: compare, race, meter o fit'],
+  ['Menos texto', 'menos texto en pantalla, más imagen y objetos'],
+];
+
+/** Claude Code reanima solo estos segmentos (no toca la narración). Guarda las escenas de antes para deshacer. */
+async function animateSegments(indices, { instruction = '' } = {}) {
   const before = indices.map(segmentStill);
+  const countBefore = indices.reduce((n, i) => n + (state.project.video.segments[i]?.scenes?.length ?? 0), 0);
+  const durations = player.tl.segments.map((s) => s.end - s.start);
   try {
-    const data = await runJob(indices.length === 1 ? `Animando el segmento ${indices[0] + 1}` : `Animando ${indices.length} segmentos`, '/api/densify', {
-      video: state.project.video, indices, variant: state.project.settings.variant,
+    const data = await runJob(indices.length === 1 ? `Animando el segmento ${indices[0] + 1}${instruction ? ` · «${instruction.slice(0, 50)}${instruction.length > 50 ? '…' : ''}»` : ''}` : `Animando ${indices.length} segmentos`, '/api/densify', {
+      video: state.project.video, indices, instruction, durations, variant: state.project.settings.variant,
     });
+    let changed = 0;
     for (const seg of data.segments ?? []) {
       const target = state.project.video.segments[seg.index];
-      if (target && seg.scenes?.length && indices.includes(seg.index)) target.scenes = seg.scenes;
+      if (!target || !seg.scenes?.length || !indices.includes(seg.index)) continue;
+      target.prevScenes = structuredClone(target.scenes);
+      target.scenes = seg.scenes;
+      changed++;
     }
+    if (!changed) { toast('Claude Code no devolvió escenas nuevas: prueba con otra petición'); return; }
+    rebuild();
+    for (const i of indices) repairCues(i); // anclas que no estén literalmente en la narración → se recolocan
     rebuild();
     selectSegment(state.seg);
     saveSoon();
     const after = indices.map(segmentStill);
-    toast(`Animado · quieto máx: ${Math.max(...before).toFixed(1)} s → ${Math.max(...after).toFixed(1)} s`);
-    if (indices.length === 1) playSegment(indices[0]);
+    const countAfter = indices.reduce((n, i) => n + (state.project.video.segments[i]?.scenes?.length ?? 0), 0);
+    toast(`Animado · escenas ${countBefore} → ${countAfter} · quieto máx ${Math.max(...before).toFixed(1)} s → ${Math.max(...after).toFixed(1)} s · si no te gusta: «Deshacer»`, 6000);
+    if (indices.length === 1) { if (state.animAsk) delete state.animAsk[indices[0]]; playSegment(indices[0]); }
   } catch {}
 }
 
@@ -441,7 +668,7 @@ function updatePace() {
   if (!pace) { el.textContent = ''; return; }
   const g = pace.longest.gap;
   el.className = `pace ${g > 10 ? 'bad' : g > 6.5 ? 'warn' : ''}`;
-  el.innerHTML = `Ritmo visual: un cambio cada <b>${pace.every.toFixed(1)} s</b> · tramo más quieto <b>${g.toFixed(1)} s</b> en ${fmt(pace.longest.at)}${g > 6.5 ? ' → pulsa «Más animación»' : ''}`;
+  el.innerHTML = `Ritmo visual: un cambio cada <b>${pace.every.toFixed(1)} s</b> · tramo más quieto <b>${g.toFixed(1)} s</b> en ${fmt(pace.longest.at)}${g > 6.5 ? ' → clic aquí para ir a ese segmento y pulsa «Más animación aquí»' : ''}`;
   const dense = state.project ? state.project.video.segments.filter((sg) => didactic(sg.narration).issues.length).length : 0;
   if (dense) el.innerHTML += ` · <b>${dense}</b> segmentos demasiado densos`;
   el.onclick = () => { player.seek(pace.longest.at + 0.05); selectSegment(segmentAt(player.tl, player.t), 0, false); };
@@ -475,6 +702,7 @@ function renderTimelineStrip() {
     el.style.flex = `${seg.end - seg.start} 0 0`;
     el.style.setProperty('--c', sectionColor(seg.section));
     el.innerHTML = `<span>${String(seg.index + 1).padStart(2, '0')} ${esc(seg.section)}</span>`;
+    el.title = `Segmento ${seg.index + 1} · ${seg.section} · ${Math.round(seg.end - seg.start)} s — clic para ir · puntos: animación · voz · sincronía`;
     if (state.project?.video.segments[seg.index]) {
       const st = segStatus(seg.index);
       const sy = syncState(seg.index);
@@ -522,6 +750,61 @@ function selectSegment(i, sceneIdx = 0, seek = true) {
   renderSceneEditor();
 }
 
+// ---- galería de objetos y logos para la escena ----
+const GALLERY = [
+  ...ICON_NAMES.filter((n) => !OBJECT_INFO[n] && !LOGOS[n]).map((id) => ({ id, name: id, tags: 'hardware' })),
+  ...OBJECT_NAMES.map((id) => ({ id, name: id, tags: OBJECT_INFO[id] })),
+  ...LOGO_IDS.map((id) => ({ id, name: LOGOS[id], tags: `logo ${id}` })),
+];
+const norm = (x) => String(x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+/** Dónde se puede poner un icono en la escena actual: icono principal y/o cada elemento. */
+function iconTargets(sc) {
+  const t = [];
+  if ('icon' in sc || ['title', 'price', 'verdict'].includes(sc.type)) t.push(['icon', 'Icono de la escena']);
+  (Array.isArray(sc.items) ? sc.items : []).forEach((it, i) => {
+    if ('icon' in (it ?? {}) || ['versus', 'showcase', 'stairs'].includes(sc.type)) t.push([`items.${i}`, `Elemento ${i + 1}: ${it?.label ?? ''}`]);
+  });
+  return t;
+}
+function renderGallery() {
+  const seg = state.project?.video.segments[state.seg];
+  const sc = seg?.scenes?.[state.scene];
+  if (!sc) return;
+  const targets = iconTargets(sc);
+  $('#obj-target').innerHTML = targets.length ? targets.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('') : '<option value="">Esta escena no usa iconos: se copia el id</option>';
+  if (!$('#obj-gallery').open) return;
+  const q = norm($('#obj-q').value.trim());
+  const list = GALLERY.filter((g) => !q || norm(`${g.id} ${g.name} ${g.tags}`).includes(q));
+  const box = $('#obj-grid');
+  box.innerHTML = '';
+  const theme = state.project.settings.theme;
+  for (const g of list) {
+    const b = document.createElement('button');
+    b.className = 'obj';
+    b.title = `${g.name}${g.tags && g.tags !== g.name ? ` — ${g.tags}` : ''}`;
+    b.innerHTML = `<canvas width="120" height="120"></canvas><span>${esc(g.name)}</span>`;
+    const c = b.querySelector('canvas').getContext('2d');
+    c.fillStyle = theme === 'editorial' ? '#F1ECE2' : '#171717'; c.fillRect(0, 0, 120, 120);
+    drawIcon(c, g.id, 60, 62, 130, 1.3);
+    b.onclick = () => applyIcon(g.id);
+    box.appendChild(b);
+  }
+  if (!list.length) box.innerHTML = '<p class="muted">Nada con ese nombre.</p>';
+}
+function applyIcon(id) {
+  const seg = state.project.video.segments[state.seg];
+  const sc = seg.scenes[state.scene];
+  const target = $('#obj-target').value;
+  if (!target) { navigator.clipboard?.writeText(id); toast(`Copiado «${id}»: pégalo en el JSON donde quieras`); return; }
+  if (target === 'icon') sc.icon = id;
+  else { const i = Number(target.split('.')[1]); sc.items[i] = { ...(sc.items[i] ?? {}), icon: id }; }
+  rebuild(); renderSceneEditor(); seekScene(); saveSoon();
+  toast(`Puesto «${id}»`);
+}
+$('#obj-gallery').addEventListener('toggle', renderGallery);
+$('#obj-q').addEventListener('input', debounce(renderGallery, 150));
+
 function renderSceneEditor() {
   const seg = state.project.video.segments[state.seg];
   seg.scenes = seg.scenes?.length ? seg.scenes : [{ type: 'title', cue: '', ...SCENE_TEMPLATES.title }];
@@ -537,6 +820,7 @@ function renderSceneEditor() {
   $$('#timeline .tick').forEach((el) => el.classList.remove('sel'));
   const ticks = $$('#timeline .seg')[state.seg]?.querySelectorAll('.tick');
   ticks?.[state.scene]?.classList.add('sel');
+  renderGallery();
 }
 
 function seekScene() {
@@ -607,7 +891,7 @@ $('#refine').onclick = async () => {
   const i = state.seg;
   try {
     const data = await runJob(`Reescribiendo segmento ${i + 1}`, '/api/refine', {
-      segment: seg, instruction: $('#refine-instruction').value, context: state.project.video.title, variant: state.project.settings.variant,
+      segment: { ...seg, prevScenes: undefined }, instruction: $('#refine-instruction').value, context: state.project.video.title, variant: state.project.settings.variant,
     });
     state.project.video.segments[i] = data;
     $('#refine-instruction').value = '';
@@ -623,10 +907,51 @@ $('#scrub').addEventListener('input', (e) => player.seek((e.target.value / 1000)
 $('#captions').onchange = (e) => { state.project.settings.captions = e.target.checked; player.setOpts({ captions: e.target.checked }); saveSoon(); };
 $('#callouts').onchange = (e) => { state.project.settings.callouts = e.target.checked; player.setOpts({ callouts: e.target.checked }); saveSoon(); };
 
+// ---- editor de coherencia: una idea, una vez; cada segmento continúa al anterior ----
+$('#coherence').onclick = async () => {
+  if (!state.project) return;
+  const v = state.project.video;
+  const before = v.segments.map((sg, i) => ({ index: i, narration: sg.narration, plan: sg.plan }));
+  try {
+    const data = await runJob('Revisando la coherencia del guion', '/api/coherence', { video: v, variant: state.project.settings.variant });
+    for (const sg of data.segments) {
+      const target = v.segments[sg.index];
+      if (!target) continue;
+      if (sg.plan) target.plan = sg.plan;
+      if (data.changed.includes(sg.index)) target.narration = sg.narration;
+    }
+    state.project.undoCoherence = data.changed.length ? before : null;
+    rebuild();
+    for (const i of data.changed) repairCues(i); // anclas movidas por la edición → se recolocan
+    rebuild();
+    selectSegment(state.seg);
+    saveSoon();
+    $('#coherence-undo').hidden = !state.project.undoCoherence;
+    toast(data.changed.length
+      ? `Coherencia: ${data.changed.length} segmentos editados (${data.changed.map((i) => i + 1).join(', ')}). Su voz queda desactualizada: «Sincronizar todo» la regenera.`
+      : 'El guion ya era coherente: no hizo falta tocar nada', 7000);
+  } catch {}
+};
+$('#coherence-undo').onclick = () => {
+  const u = state.project?.undoCoherence;
+  if (!u || !confirm('¿Volver al texto de antes de la revisión de coherencia?')) return;
+  for (const sg of u) if (state.project.video.segments[sg.index]) { state.project.video.segments[sg.index].narration = sg.narration; state.project.video.segments[sg.index].plan = sg.plan; }
+  state.project.undoCoherence = null;
+  $('#coherence-undo').hidden = true;
+  rebuild();
+  for (let i = 0; i < state.project.video.segments.length; i++) repairCues(i);
+  rebuild();
+  selectSegment(state.seg);
+  saveSoon();
+  toast('Revisión deshecha');
+};
+
 $('#sync-all').onclick = () => { if (state.project) syncSegments(state.project.video.segments.map((_, i) => i)); };
 
 $('#densify').onclick = () => {
   if (!state.project) return;
+  const n = state.project.video.segments.length;
+  if (!confirm(`¿Reanimar los ${n} segmentos del vídeo a la vez?\n\nPara un segmento concreto es mejor seleccionarlo y usar «Más animación aquí» en el paso ② (puedes pedirle qué quieres y deshacer).`)) return;
   animateSegments(state.project.video.segments.map((_, i) => i));
 };
 
@@ -684,17 +1009,87 @@ $('#download-script').onclick = () => {
   download(new Blob([`# ${v.title}\n\n${body}\n`], { type: 'text/plain' }), `${slug(v.title)}-guion.txt`);
 };
 
-// exportar vídeo sin voz (tiempo real)
-$('#export-video').onclick = async () => {
-  if (state.recording) return;
+// ---- exportar vídeo (rápido: WebCodecs + ffmpeg; si no hay WebCodecs, grabación en tiempo real) ----
+function progressPanel(title) {
+  const panel = $('#engine');
+  const logEl = $('#engine-log');
+  panel.hidden = false;
+  panel.classList.remove('done', 'fail', 'min');
+  $('#engine-title').textContent = title;
+  logEl.innerHTML = '';
+  const ctrl = new AbortController();
+  job = ctrl;
+  const t0 = Date.now();
+  const timer = setInterval(() => { $('#engine-elapsed').textContent = `${Math.floor((Date.now() - t0) / 1000)} s`; }, 500);
+  $('#engine-cancel').textContent = 'Cancelar';
+  $('#engine-cancel').onclick = () => ctrl.abort();
+  let live = null;
+  const add = (text, cls = '') => { const li = document.createElement('li'); li.textContent = text; if (cls) li.className = cls; logEl.appendChild(li); logEl.scrollTop = logEl.scrollHeight; return li; };
+  const end = (cls, text) => {
+    clearInterval(timer); job = null; add(text, cls === 'done' ? 'ok' : 'bad'); panel.classList.add(cls);
+    $('#engine-cancel').textContent = 'Cerrar';
+    $('#engine-cancel').onclick = () => { if (!job) panel.hidden = true; };
+  };
+  return {
+    signal: ctrl.signal,
+    log: (t) => add(t),
+    live: (t) => { if (!live) live = add(t); else live.textContent = t; },
+    done: (t) => end('done', t),
+    fail: (t) => end('fail', t),
+  };
+}
+
+async function fastExport({ title, width, height, t0, t1, renderFrame, filename }) {
+  if (job) return toast('Ya hay una tarea en marcha');
+  if (state.recording) return toast('Hay una grabación en curso: termínala antes');
+  const ui = progressPanel(title);
+  player.pause();
+  await preloadLogos(); // que ningún logo salga sin cargar en el MP4
+  try {
+    let audio = null;
+    if (player.audioOn()) { ui.log('🎚️  Mezclando el audio (voz, efectos y música)…'); audio = await mixer.renderWav(player.tl, { voice: true, sfx: true, music: true }, { from: t0, to: t1 }); }
+    else ui.log('🔇 Este proyecto no tiene voz IA, efectos ni música activos: el vídeo saldrá sin sonido');
+    ui.log(`🎞️  Renderizando ${Math.round((t1 - t0) * 30)} fotogramas a ${width}×${height} y codificando a H.264…`);
+    const res = await exportVideo({
+      width, height, fps: 30, t0, t1, renderFrame, audio, filename, signal: ui.signal,
+      onProgress: (p, info) => {
+        if (info.stage === 'audio') ui.live('⬆️  Subiendo el audio…');
+        if (info.stage === 'video') ui.live(`   ${Math.round(p * 100)} % · fotograma ${info.frame}/${info.total} · quedan ~${Math.ceil(info.eta / 60)} min`);
+        if (info.stage === 'mux') ui.log('🧩 Uniendo vídeo y audio con ffmpeg…');
+      },
+    });
+    ui.done(`✔ ${res.file} · ${(res.bytes / 1048576).toFixed(0)} MB · ${res.audio ? 'con audio' : 'sin audio'} · descargando`);
+    downloadUrl(res.url, res.file);
+    toast(`Vídeo exportado: ${res.file} (también queda en projects/exports/)`, 6000);
+  } catch (e) {
+    ui.fail(`✖ ${e.message}`);
+  }
+}
+
+$('#export-video').onclick = () => {
+  if (!state.project) return;
+  if (!canExportFast()) return realtimeExport();
+  const opts = { ...player.opts, progress: false };
+  fastExport({
+    title: 'Exportando el vídeo', width: 1920, height: 1080, t0: 0, t1: player.tl.duration,
+    renderFrame: (ctx, t) => drawFrame(ctx, player.tl, t, opts),
+    filename: slug(state.project.video.title),
+  });
+};
+
+// alternativa para navegadores sin WebCodecs: grabación en tiempo real
+async function realtimeExport() {
+  if (state.recording) return toast('Hay una grabación en curso');
+  await preloadLogos();
+  state.stopAt = null;
   const rec = new Recorder(canvas);
   await rec.start({ mic: false, audioStream: player.audioOn() ? mixer.recDest.stream : null });
   state.recording = { rec, export: true };
   player.seek(0);
   player.rate = 1;
   player.play();
-  toast(`Exportando en tiempo real (${fmt(player.tl.duration)}). No cambies de pestaña.`, 5000);
-};
+  toast(`Tu navegador no soporta la exportación rápida: grabando en tiempo real (${fmt(player.tl.duration)}). No cambies de pestaña ni de sección.`, 7000);
+}
 
 // ---------- 03 · TELEPROMPTER ----------
 function enterPrompter() {
@@ -795,6 +1190,11 @@ function jumpSegment(dir) {
 }
 
 document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    if (state.project) saveProject(state.project);
+    return;
+  }
   if (typing()) return;
   const view = (location.hash || '#descubrir').slice(1);
   if (view === 'teleprompter') {
@@ -810,14 +1210,24 @@ document.addEventListener('keydown', (e) => {
       r.value = Math.max(0.6, Math.min(1.5, Number(r.value) + (e.key === 'ArrowUp' ? 0.05 : -0.05)));
       r.dispatchEvent(new Event('input'));
     } else if (e.key === 'Escape') { state.recording ? stopTake() : player.pause(); }
-  } else if (view === 'estudio' && e.code === 'Space' && state.project) {
-    e.preventDefault();
-    player.toggle();
+  } else if (view === 'estudio' && state.project) {
+    if (e.code === 'Space') { e.preventDefault(); player.toggle(); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const dir = e.key === 'ArrowRight' ? 1 : -1;
+      if (e.shiftKey) { jumpSegment(dir); selectSegment(segmentAt(player.tl, player.t), 0, false); }
+      else player.seek(player.t + dir * 5);
+    } else if (e.key === 'Home') { e.preventDefault(); player.seek(0); }
   }
 });
 
 // ---------- 04 · MINIATURA ----------
-const iconOptions = ICON_NAMES.map((n) => `<option>${n}</option>`).join('');
+const BASE_ICONS = ICON_NAMES.filter((n) => !OBJECT_INFO[n] && !LOGOS[n]);
+const iconOptions = [
+  ['Hardware', BASE_ICONS.map((n) => [n, n])],
+  ['Objetos animados', OBJECT_NAMES.map((n) => [n, `${n} — ${OBJECT_INFO[n]}`])],
+  ['Logos', LOGO_IDS.map((n) => [n, LOGOS[n]])],
+].map(([g, list]) => `<optgroup label="${g}">${list.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</optgroup>`).join('');
 $('#thumb-form').icon.innerHTML = iconOptions;
 $('#thumb-form').icon2.innerHTML = `<option>none</option>${iconOptions}`;
 
@@ -939,8 +1349,8 @@ const SCOPES = {
   elevenlabs: [['mine', 'Mis voces'], ['all', 'Todas las voces de mi cuenta']],
 };
 const PROVIDER_UI = {
-  fish: { name: 'Fish Audio', speed: [0.8, 1.3], keyHint: 'Pega tu API key de Fish Audio (fish.audio → API Keys)', selfEmpty: 'No tienes voces propias todavía: desmarca «Solo mis voces» para buscar en la biblioteca pública, o crea tu clon en fish.audio.' },
-  elevenlabs: { name: 'ElevenLabs', speed: [0.7, 1.2], keyHint: 'Pega tu API key de ElevenLabs (elevenlabs.io → Developers → API Keys)', selfEmpty: 'No tienes voces propias: desmarca «Solo mis voces» para ver las voces de tu cuenta, o crea un clon en elevenlabs.io.' },
+  fish: { name: 'Fish Audio', speed: [0.8, 1.3], keyHint: 'Pega tu API key de Fish Audio (fish.audio → API Keys)', selfEmpty: 'No tienes voces propias todavía: elige otra opción en el desplegable (p. ej. la biblioteca) para buscar voces públicas, o crea tu clon en fish.audio.' },
+  elevenlabs: { name: 'ElevenLabs', speed: [0.7, 1.2], keyHint: 'Pega tu API key de ElevenLabs (elevenlabs.io → Developers → API Keys)', selfEmpty: 'No tienes voces propias: elige otra opción en el desplegable para ver la biblioteca de voces, o crea un clon en elevenlabs.io.' },
 };
 let ttsStatus = {};
 
@@ -1214,13 +1624,15 @@ function voiceAlignments() {
 }
 
 /** Alinea los audios de esos segmentos (Whisper local) y guarda los tiempos reales de cada palabra. */
-async function alignSegments(indices, { quiet = false } = {}) {
+async function alignSegments(indices, { quiet = false, force = false } = {}) {
   const v = voiceOf();
   if (!v || !state.aligner.available) return false;
-  const segs = indices.map((i) => v.segments.find((x) => x.index === i)).filter((x) => x?.url && x.alignedUrl !== x.url);
+  // force: volver a escuchar aunque ya estuviera alineado (la alineación guardada puede estar mal)
+  const segs = indices.map((i) => v.segments.find((x) => x.index === i)).filter((x) => x?.url && (force || x.alignedUrl !== x.url));
   if (!segs.length) return true;
-  const data = await runJob(segs.length === 1 ? `Sincronizando con la voz · segmento ${segs[0].index + 1}` : `Sincronizando con la voz · ${segs.length} segmentos`, '/api/align', {
+  const data = await runJob(segs.length === 1 ? `${force ? 'Volviendo a escuchar' : 'Sincronizando con'} la voz · segmento ${segs[0].index + 1}` : `${force ? 'Volviendo a escuchar' : 'Sincronizando con'} la voz · ${segs.length} segmentos`, '/api/align', {
     segments: segs.map((x) => ({ index: x.index, url: x.url, spoken: x.spoken ?? state.project.video.segments[x.index].narration })),
+    force,
   });
   for (const r of data.segments) {
     const sg = v.segments.find((x) => x.index === r.index);
@@ -1291,12 +1703,22 @@ function voiceHealth(i) {
   const tooLong = dur > (expectedWords / 140) * 60 + 6;        // más lento que 140 palabras/min + margen
   const missing = heard < expectedWords * 0.7;                    // se "comió" más del 30 % del texto
   const stuck = maxGap > 4 || (sg.words[0]?.e - sg.words[0]?.s) > 3; // >4 s sin palabras o una "palabra" eterna
-  const broken = (tooLong && missing) || (missing && stuck) || (tooLong && stuck);
+  // la voz dijo OTRA cosa: 8+ palabras seguidas del guion que no aparecen en el audio (en audios buenos, ≤3)
+  const garbled = (player.tl.segments[i]?.align?.maxRun ?? 0) >= 8;
+  const broken = garbled || (tooLong && missing) || (missing && stuck) || (tooLong && stuck);
   return { broken, heard, expectedWords, dur, maxGap };
 }
 
 /** Pone de acuerdo guion, voz y animación de esos segmentos, en orden y pidiendo confirmación de lo que cuesta. */
 async function syncSegments(indices) {
+  // un audio "roto" puede ser solo un error de Whisper al escucharlo: antes de pagar por regenerar,
+  // se vuelve a escuchar (gratis) y solo se regenera si sigue roto
+  const suspect = indices.filter((i) => { const s = syncState(i); return s.broken && !s.voiceStale; });
+  if (suspect.length && state.aligner.available) {
+    try { await alignSegments(suspect, { quiet: true, force: true }); } catch {}
+    const healed = suspect.filter((i) => !syncState(i).broken);
+    if (healed.length) toast(`Segmento${healed.length > 1 ? 's' : ''} ${healed.map((i) => i + 1).join(', ')}: el audio estaba bien, era Whisper que lo había oído mal. Re-sincronizado gratis ✓`, 7000);
+  }
   const states = indices.map((i) => ({ i, ...syncState(i) }));
   const fixCues = states.filter((x) => x.fuzzy).map((x) => x.i);
   const regen = states.filter((x) => x.voiceStale || x.broken).map((x) => x.i);
@@ -1909,9 +2331,21 @@ $('#short-view').addEventListener('click', (e) => { if (e.target.id === 'short-v
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeShortView(); });
 
 async function exportShort(k, cv) {
-  if (state.recording) return toast('Ya hay una grabación en curso');
   const c = shortClips()[k];
-  // a resolución completa mientras se graba
+  if (!c) return;
+  if (!canExportFast()) return realtimeShort(k, cv);
+  const clip = { ...c };
+  fastExport({
+    title: `Exportando el short ${k + 1}`, width: SW, height: SH, t0: c.t0, t1: c.t1,
+    renderFrame: (ctx, t) => drawShort(ctx, player.tl, t, clip, shortOpts()),
+    filename: `${slug(state.project.video.title)}-short${k + 1}`,
+  });
+}
+
+async function realtimeShort(k, cv) {
+  if (state.recording) return toast('Ya hay una grabación en curso');
+  await preloadLogos();
+  const c = shortClips()[k];
   cv.width = SW; cv.height = SH;
   const rec = new Recorder(cv);
   player.pause();
@@ -1968,22 +2402,56 @@ $('#shorts-generate').onclick = async () => {
 };
 
 // ---------- 06 · PROYECTOS ----------
+const fmtMin = (m) => `${Math.floor(m)}:${String(Math.round((m % 1) * 60)).padStart(2, '0')}`;
+async function openById(id, hash = '#estudio') {
+  try {
+    openProject(await getJSON(`/api/projects/${encodeURIComponent(id)}`));
+    location.hash = hash;
+  } catch (e) { toast(`No se pudo abrir: ${e.message}`); }
+}
+
+/** Estado del proyecto en una línea de chips: duración · voz · publicación · shorts. */
+function projectChips(p) {
+  const chips = [];
+  if (p.minutes) chips.push(`<i>≈ ${fmtMin(p.minutes)} min</i>`);
+  if (p.voice) chips.push(`<i class="${p.voice.done >= p.voice.total ? 'ok' : 'warn'}">🎙 ${esc(p.voice.title || p.voice.provider)}${p.voice.done < p.voice.total ? ` ${p.voice.done}/${p.voice.total}` : ''}</i>`);
+  else chips.push('<i>Sin voz</i>');
+  if (p.published) chips.push('<i class="ok">Textos listos</i>');
+  if (p.shorts) chips.push(`<i class="ok">${p.shorts} shorts</i>`);
+  return `<div class="chips">${chips.join('')}</div>`;
+}
+
 async function loadProjects() {
   const box = $('#projects');
   box.innerHTML = '';
-  const add = (title, sub, spec, onclick) => {
+  const add = (title, sub, spec, onclick, extra = {}) => {
     const el = document.createElement('div');
-    el.className = 'project';
-    el.innerHTML = `<canvas width="480" height="270"></canvas><div><b>${esc(title)}</b><span class="muted">${esc(sub)}</span></div>`;
+    el.className = `project${extra.current ? ' current' : ''}`;
+    el.tabIndex = 0;
+    el.innerHTML = `<canvas width="480" height="270"></canvas><div><b>${esc(title)}</b><span class="muted">${esc(sub)}</span>${extra.chips ?? ''}</div>`
+      + (extra.current ? '<span class="badge">Abierto</span>' : '')
+      + (extra.onDelete ? '<button class="del" title="Mover a la papelera">Borrar</button>' : '');
     drawThumb(el.querySelector('canvas').getContext('2d'), spec ?? THUMB_DEFAULT);
     el.onclick = onclick;
+    el.onkeydown = (e) => { if (e.key === 'Enter') onclick(); };
+    el.querySelector('.del')?.addEventListener('click', (e) => { e.stopPropagation(); extra.onDelete(); });
     box.appendChild(el);
   };
   try {
     for (const p of await getJSON('/api/projects')) {
-      add(p.title, new Date(p.updated).toLocaleString('es-ES'), p.thumbnail, async () => {
-        openProject(await getJSON(`/api/projects/${encodeURIComponent(p.id)}`));
-        location.hash = '#estudio';
+      add(p.title, new Date(p.updated).toLocaleString('es-ES'), p.thumbnail, () => openById(p.id), {
+        chips: projectChips(p),
+        current: state.project?.id === p.id,
+        onDelete: async () => {
+          if (!confirm(`¿Borrar «${p.title}»?\n\nSe mueve a projects/.papelera (se puede recuperar a mano).`)) return;
+          try {
+            await fetch(`/api/projects/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
+            if (state.project?.id === p.id) { state.project = null; $('#studio').hidden = true; $('#studio-empty').hidden = false; }
+            if (store.get('lastProject') === p.id) store.set('lastProject', null);
+            toast('Proyecto movido a la papelera');
+            loadProjects(); renderRecent();
+          } catch (e) { toast(`No se pudo borrar: ${e.message}`); }
+        },
       });
     }
   } catch {}
@@ -1991,6 +2459,23 @@ async function loadProjects() {
     openProject(await getJSON('/demo/demo.json'));
     location.hash = '#estudio';
   });
+}
+
+/** Estudio vacío: acceso directo a los últimos proyectos. */
+async function renderRecent() {
+  const box = $('#recent');
+  if (!box) return;
+  try {
+    const list = (await getJSON('/api/projects')).slice(0, 4);
+    box.innerHTML = list.length ? '<p class="kicker">Seguir con…</p>' : '';
+    for (const p of list) {
+      const b = document.createElement('button');
+      b.className = 'recent-item';
+      b.innerHTML = `<b>${esc(p.title)}</b>${projectChips(p)}`;
+      b.onclick = () => openById(p.id);
+      box.appendChild(b);
+    }
+  } catch { box.innerHTML = ''; }
 }
 
 // ---------- arranque ----------
@@ -2004,4 +2489,10 @@ animateHero();
 renderTopics();
 loadSoundLib();
 player.render();
+// reabrir el último proyecto en el que trabajabas (al recargar no se pierde el sitio)
+const lastId = store.get('lastProject', null);
+if (lastId && !state.project) {
+  try { openProject(await getJSON(`/api/projects/${encodeURIComponent(lastId)}`)); } catch { store.set('lastProject', null); }
+}
 route();
+renderRecent();

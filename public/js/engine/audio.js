@@ -302,11 +302,12 @@ export class Mixer {
   detachMic() { try { this.micSrc?.disconnect(); this.nodes.mic.disconnect(); } catch {} this.micSrc = null; }
 
   /** Render offline a WAV: parts = { voice, sfx, music } (mezcla completa o pistas por separado). */
-  async renderWav(tl, parts = { voice: true, sfx: true, music: true }) {
+  /** range: { from, to } en segundos de la línea de tiempo (por defecto, todo el vídeo). */
+  async renderWav(tl, parts = { voice: true, sfx: true, music: true }, { from = 0, to = tl.duration } = {}) {
     const rate = 48000;
-    const off = new OfflineAudioContext(2, Math.ceil((tl.duration + 0.5) * rate), rate);
+    const off = new OfflineAudioContext(2, Math.ceil((to - from + 0.25) * rate), rate);
     const n = this.graph(off, off.destination);
-    this.schedule(off, n, tl, 0, 0, parts);
+    this.schedule(off, n, tl, from, 0, parts);
     return wav(await off.startRendering());
   }
 }
