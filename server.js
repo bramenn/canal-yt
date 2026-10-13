@@ -1,7 +1,7 @@
 // Servidor local: sirve la app y usa Claude Code en modo headless (`claude -p`) como motor.
 // Sin dependencias: node server.js  →  http://localhost:4321
 import http from 'node:http';
-import { spawn, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { readFile, writeFile, readdir, mkdir, stat, rename } from 'node:fs/promises';
 import { existsSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
@@ -20,6 +20,7 @@ import * as aligner from './lib/align/index.js';
 import * as exporter from './lib/export.js';
 import * as audiofix from './lib/audiofix.js';
 import { createReadStream } from 'node:fs';
+import { CLAUDE_BIN, runClaude as runClaudeBase, claudeStep as claudeStepBase, sendJSON, readRaw, readBody, sse } from './lib/claude.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -27,7 +28,6 @@ const PROJECTS = process.env.PROJECTS_DIR || path.join(ROOT, 'projects');
 const WORK = path.join(ROOT, '.work');
 const STYLE = path.join(ROOT, 'style');
 const PORT = Number(process.env.PORT || 4321);
-const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -38,103 +38,10 @@ const MIME = {
 await mkdir(PROJECTS, { recursive: true });
 await mkdir(WORK, { recursive: true });
 
-// ---------- Claude Code runner ----------
+// ---------- Claude Code (lib/claude.js) con el prompt de sistema del canal ----------
 
-function describeTool(name, input = {}) {
-  if (name === 'WebSearch') return `🔎 Buscando: ${input.query ?? ''}`;
-  if (name === 'WebFetch') return `📄 Leyendo: ${input.url ?? ''}`;
-  if (name === 'StructuredOutput') return '✍️  Escribiendo resultado final…';
-  if (name === 'Read') return `📚 Estudiando referencia: ${path.basename(input.file_path ?? '')}`;
-  if (name === 'Glob' || name === 'Grep') return '📚 Revisando referencias…';
-  return `🛠  ${name}`;
-}
-
-/**
- * Lanza `claude -p` y emite eventos {type:'log'|'text'|'result'|'error'} via `emit`.
- * Devuelve una función para cancelar el proceso.
- */
-function runClaude({ prompt, schema, model, effort, variant, system, cwd = WORK, tools = ['WebSearch', 'WebFetch'] }, emit) {
-  const args = [
-    '-p',
-    '--output-format', 'stream-json', '--verbose',
-    '--json-schema', JSON.stringify(schema),
-    '--system-prompt', system ?? systemPrompt({ variant }),
-    '--no-session-persistence',
-    '--tools', tools.join(','),
-  ];
-  if (tools.length) args.push('--allowedTools', ...tools);
-  if (model) args.push('--model', model);
-  if (effort) args.push('--effort', effort);
-
-  const child = spawn(CLAUDE_BIN, args, { cwd, env: process.env });
-  child.stdin.end(prompt);
-
-  let buf = '';
-  let stderr = '';
-  let done = false;
-  const started = Date.now();
-
-  child.stdout.on('data', (chunk) => {
-    buf += chunk;
-    let nl;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const raw = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!raw) continue;
-      let ev;
-      try { ev = JSON.parse(raw); } catch { continue; }
-      handle(ev);
-    }
-  });
-  child.stderr.on('data', (c) => { stderr += c; });
-
-  function handle(ev) {
-    if (ev.type === 'system' && ev.subtype === 'init') {
-      emit({ type: 'log', text: `⚙️  Claude Code listo (${ev.model ?? model ?? 'modelo por defecto'})` });
-    } else if (ev.type === 'assistant') {
-      for (const block of ev.message?.content ?? []) {
-        if (block.type === 'tool_use') emit({ type: 'log', text: describeTool(block.name, block.input) });
-        else if (block.type === 'text' && block.text?.trim()) emit({ type: 'text', text: block.text.trim().slice(0, 400) });
-      }
-    } else if (ev.type === 'result') {
-      done = true;
-      const secs = ((Date.now() - started) / 1000).toFixed(0);
-      if (ev.is_error || !ev.structured_output) {
-        let data = null;
-        try { data = JSON.parse(ev.result); } catch {}
-        if (data && !ev.is_error) emit({ type: 'result', data, cost: ev.total_cost_usd, secs });
-        else emit({ type: 'error', message: ev.result || ev.subtype || 'Claude Code no devolvió resultado' });
-      } else {
-        emit({ type: 'result', data: ev.structured_output, cost: ev.total_cost_usd, secs });
-      }
-    }
-  }
-
-  child.on('error', (err) => {
-    done = true;
-    emit({ type: 'error', message: `No se pudo lanzar "${CLAUDE_BIN}": ${err.message}` });
-  });
-  child.on('close', (code) => {
-    if (!done) emit({ type: 'error', message: `Claude Code terminó (código ${code}). ${stderr.slice(-600)}` });
-    emit({ type: 'end' });
-  });
-
-  return () => { if (!child.killed) child.kill('SIGTERM'); };
-}
-
-/** runClaude como promesa: reenvía el progreso y resuelve con el evento 'result'. */
-function claudeStep(opts, emit, track) {
-  return new Promise((resolve, reject) => {
-    let done = false;
-    const cancel = runClaude(opts, (ev) => {
-      if (ev.type === 'end') { if (!done) reject(new Error('Claude Code terminó sin resultado')); return; }
-      if (ev.type === 'result') { done = true; return resolve(ev); }
-      if (ev.type === 'error') { done = true; return reject(new Error(ev.message)); }
-      emit(ev);
-    });
-    track(cancel);
-  });
-}
+const runClaude = (opts, emit) => runClaudeBase({ cwd: WORK, ...opts, system: opts.system ?? systemPrompt({ variant: opts.variant }) }, emit);
+const claudeStep = (opts, emit, track) => claudeStepBase(opts, emit, track, runClaude);
 
 /** Editor de coherencia: quita explicaciones repetidas y une los segmentos en un hilo. Aplica los cambios a `video`. */
 async function coherenceStep(video, body, emit, track) {
@@ -276,38 +183,6 @@ function voiceJob(body, emit) {
   return () => { ctrl.abort(); cancelClaude(); };
 }
 
-// ---------- HTTP helpers ----------
-
-function sendJSON(res, status, data) {
-  res.writeHead(status, { 'Content-Type': MIME['.json'] });
-  res.end(JSON.stringify(data));
-}
-
-async function readRaw(req, limit = 80 * 1024 * 1024) {
-  const chunks = [];
-  let size = 0;
-  for await (const c of req) { size += c.length; if (size > limit) throw new Error('Archivo demasiado grande (máx. 80 MB)'); chunks.push(c); }
-  return Buffer.concat(chunks);
-}
-
-async function readBody(req) {
-  const chunks = [];
-  for await (const c of req) chunks.push(c);
-  const raw = Buffer.concat(chunks).toString('utf8');
-  return raw ? JSON.parse(raw) : {};
-}
-
-function sse(res, job) {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  });
-  const emit = (ev) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(ev)}\n\n`); if (ev.type === 'end') res.end(); };
-  const ping = setInterval(() => emit({ type: 'ping' }), 15000);
-  const cancel = job(emit);
-  res.on('close', () => { clearInterval(ping); cancel(); });
-}
 
 const safeId = (id) => String(id).replace(/[^a-z0-9_-]/gi, '').slice(0, 80);
 

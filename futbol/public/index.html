@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Estudio Fútbol</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#" id="go-home" title="Mis vídeos"><span class="logo">⚽</span><b>Estudio Fútbol</b></a>
+    <nav class="steps" id="steps" hidden>
+      <button data-step="guion"><span class="n">1</span><span class="lbl">Guion</span><small></small></button>
+      <button data-step="imagenes"><span class="n">2</span><span class="lbl">Imágenes</span><small></small></button>
+      <button data-step="voz"><span class="n">3</span><span class="lbl">Voz</span><small></small></button>
+      <button data-step="miniatura"><span class="n">4</span><span class="lbl">Miniatura</span><small></small></button>
+      <button data-step="publicar"><span class="n">5</span><span class="lbl">Publicar</span><small></small></button>
+    </nav>
+    <div class="top-actions">
+      <button id="home-btn" class="ghost" hidden>← Mis vídeos</button>
+      <button id="open-settings" class="icon" title="Ajustes (claves y estado)">⚙️</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============ INICIO ============ -->
+    <section id="home">
+      <div class="hero">
+        <h1>¿Sobre qué hacemos el vídeo?</h1>
+        <p class="lead" id="lead">Escribe la pregunta o la historia. El estudio investiga, escribe el guion, busca fotos y clips, pone la voz y prepara la miniatura.</p>
+        <div class="mode-tabs" id="mode-tabs" role="tablist">
+          <button type="button" data-mode="idea" class="on">💡 Tengo una idea</button>
+          <button type="button" data-mode="script">📝 Ya tengo el guion</button>
+        </div>
+        <form id="new-form" class="new-form" data-mode="idea">
+          <textarea name="topic" id="topic" class="only-idea" required rows="2" placeholder="Ej.: Por qué ningún técnico confía en Endrick en el Real Madrid"></textarea>
+          <div class="only-script script-box">
+            <input name="title" id="own-title" placeholder="Título del vídeo (opcional: si lo dejas vacío, se propone uno)" />
+            <textarea name="script" id="own-script" rows="10" placeholder="Pega aquí tu guion completo. Se usa tal cual: la IA no cambia ni una palabra, solo pone imágenes, clips, voz y miniatura.&#10;&#10;Consejo: separa las partes con una línea en blanco."></textarea>
+            <span class="hint" id="script-stats"></span>
+          </div>
+          <div class="examples only-idea" id="examples">
+            <span>Ideas:</span>
+            <button type="button">Por qué Endrick no juega en el Real Madrid</button>
+            <button type="button">Qué le pasó a João Félix</button>
+            <button type="button">Cómo Lamine Yamal se convirtió en estrella con 16 años</button>
+          </div>
+          <div class="form-row">
+            <label class="duration only-idea" title="Duración del vídeo en minutos (de 1 a 20; se admiten decimales, p. ej. 2.5)">
+              <span>Duración</span>
+              <input type="number" name="minutes" min="1" max="20" step="0.5" value="6" required inputmode="decimal" />
+              <span>min</span>
+            </label>
+            <label class="check" title="Guion, fotos, clips, voz y miniatura sin que tengas que hacer nada. Luego puedes cambiar lo que quieras.">
+              <input type="checkbox" name="auto" checked /><span>Hacerlo todo automático</span>
+            </label>
+            <button class="primary big">Crear vídeo →</button>
+          </div>
+          <details class="more only-idea">
+            <summary>Más opciones</summary>
+            <label>Indicaciones para el guion<textarea name="notes" rows="2" placeholder="Ej.: céntrate en su etapa con Mourinho; menciona su lesión"></textarea></label>
+            <label>Calidad del guion
+              <select name="model"><option value="opus">Máxima (más lento)</option><option value="sonnet">Rápida</option></select>
+            </label>
+          </details>
+        </form>
+      </div>
+      <div class="list-head"><h2>Tus vídeos</h2></div>
+      <div id="project-list" class="cards"></div>
+    </section>
+
+    <!-- ============ EDITOR ============ -->
+    <section id="editor" hidden>
+      <div class="stage">
+        <div class="player">
+          <canvas id="canvas"></canvas>
+          <button id="big-play" class="big-play" title="Reproducir (espacio)">▶</button>
+        </div>
+        <div class="controls">
+          <button id="play" class="icon" title="Reproducir / pausa (espacio)">▶</button>
+          <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Posición" />
+          <span id="time" class="time">0:00 / 0:00</span>
+        </div>
+        <div class="now" id="now"><span class="now-label">Ahora se dice</span><p id="now-text">—</p></div>
+      </div>
+
+      <div class="panel">
+        <h1 class="video-title" id="title" contenteditable="plaintext-only" spellcheck="false" title="Clic para editar el título"></h1>
+
+        <!-- 1 · Guion -->
+        <div class="view" data-view="guion">
+          <div class="view-head">
+            <div><h2>Guion</h2><p class="hint">Lo que dirá la voz, por partes. Puedes escribir encima o pedirle a la IA que reescriba una parte.</p></div>
+          </div>
+          <div id="segments"></div>
+        </div>
+
+        <!-- 2 · Imágenes -->
+        <div class="view" data-view="imagenes" hidden>
+          <div class="view-head">
+            <div><h2>Imágenes</h2><p class="hint">Cada tarjeta es lo que se ve mientras suena esa frase. Haz clic en una para cambiarla.</p></div>
+          </div>
+          <div class="actions">
+            <button id="autofill" class="primary">✨ Completar y revisar fotos</button>
+            <button id="autoclips">🎬 Poner clips de vídeo</button>
+            <span class="summary" id="img-summary"></span>
+          </div>
+          <div id="shots"></div>
+        </div>
+
+        <!-- 3 · Voz -->
+        <div class="view" data-view="voz" hidden>
+          <div class="view-head">
+            <div><h2>Voz</h2><p class="hint">Elige quién narra (voces en español latino) y genera la voz. Si luego cambias el guion, solo se rehacen las partes cambiadas.</p></div>
+          </div>
+          <div class="voice-current" id="voice-current"></div>
+          <div class="search-row">
+            <input id="voice-q" placeholder="Buscar voz: narrador, colombiano, mujer…" />
+            <button id="voice-search">Buscar</button>
+          </div>
+          <div id="voices" class="voices"></div>
+          <div class="sticky-cta"><button id="voice-gen" class="primary big">🎙 Generar la voz</button><span id="voice-info" class="hint"></span></div>
+        </div>
+
+        <!-- 4 · Miniatura -->
+        <div class="view" data-view="miniatura" hidden>
+          <div class="view-head">
+            <div><h2>Miniatura y título</h2><p class="hint">El jugador recortado, de fondo la temática y un texto que engancha. Cada miniatura trae títulos pensados para ella.</p></div>
+            <button id="thumbs-make" class="primary">✨ Crear 3 miniaturas</button>
+          </div>
+          <div id="thumbs" class="thumbs"></div>
+        </div>
+
+        <!-- 5 · Publicar -->
+        <div class="view" data-view="publicar" hidden>
+          <div class="view-head"><div><h2>Exportar y publicar</h2><p class="hint">Revisa la lista, exporta el vídeo y copia los textos para YouTube.</p></div></div>
+          <ul class="checklist" id="checklist"></ul>
+          <div class="export-box">
+            <button id="export" class="primary big">⬇ Exportar vídeo MP4</button>
+            <button id="capcut" class="big" title="Crea un proyecto de CapCut con las imágenes, los clips, las transiciones y la voz, para retocarlo allí">✂️ Abrir en CapCut</button>
+            <label class="check"><input type="checkbox" id="capcut-subs" /><span>con subtítulos</span></label>
+          </div>
+          <p class="hint" id="capcut-hint"></p>
+          <div id="pub" class="pub"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ VENTANAS ============ -->
+  <dialog id="shot-dlg" class="dlg wide">
+    <div class="dlg-head"><h3 id="shot-title"></h3><button class="icon" data-close>✕</button></div>
+    <div class="shot-edit">
+      <div class="shot-preview">
+        <div id="shot-media" class="shot-media"></div>
+        <div id="shot-warn" class="alert" hidden></div>
+      </div>
+      <div class="shot-info">
+        <div class="field"><span class="label">Se dice</span><p id="shot-sentence" class="quote"></p></div>
+        <div class="field"><span class="label">Debería verse</span><p id="shot-desc"></p></div>
+        <div class="choose">
+          <span class="label">Cambiar por…</span>
+          <div class="choose-btns">
+            <button data-act="search" class="primary">🔎 Otra foto</button>
+            <button data-act="clip">🎬 Clip de YouTube</button>
+            <button data-act="file">📁 Subir foto</button>
+            <button data-act="url">🔗 Pegar enlace</button>
+            <input type="file" id="shot-file" accept="image/*" hidden />
+          </div>
+        </div>
+        <details class="more">
+          <summary>Más opciones</summary>
+          <label>Búsqueda de fotos<input id="shot-query" /></label>
+          <label>Empieza en las palabras<input id="shot-cue" placeholder="(al principio de la parte)" /></label>
+          <label>Transición de entrada<select id="shot-transition"></select></label>
+          <button data-act="del" class="danger">Quitar esta imagen del vídeo</button>
+        </details>
+      </div>
+    </div>
+    <div id="shot-results" class="results" hidden></div>
+  </dialog>
+
+  <dialog id="clip-dlg" class="dlg wide">
+    <div class="dlg-head"><h3>Clip de YouTube</h3><button class="icon" data-close>✕</button></div>
+    <div class="search-row"><input id="clip-q" placeholder="Buscar en YouTube" /><button id="clip-search" class="primary">Buscar</button></div>
+    <div class="clip-layout">
+      <div id="clip-results"></div>
+      <div id="clip-view" hidden>
+        <b id="clip-title"></b>
+        <div id="clip-wrap"></div>
+        <p class="hint">Pulsa un 🔥 (lo más visto del vídeo) o una miniatura de la tira para ir a ese momento.</p>
+        <div id="clip-peaks" class="chips"></div>
+        <div id="clip-strip"></div>
+        <div class="clip-use-row">
+          <label>Desde (s)<input id="clip-start" type="number" min="0" step="0.1" /></label>
+          <label>Dura (s)<input id="clip-dur" type="number" min="1" max="12" step="0.5" /></label>
+          <button id="clip-use" class="primary">Usar este trozo</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="settings" class="dlg">
+    <div class="dlg-head"><h3>Ajustes</h3><button class="icon" data-close>✕</button></div>
+    <div class="settings">
+      <div class="field"><span class="label">Estado</span><ul id="status-list" class="status-list"></ul></div>
+      <label>Inteligencia artificial que hace el trabajo
+        <select id="engine">
+          <option value="auto">Automático: Claude Code y, si falla, Codex</option>
+          <option value="claude">Solo Claude Code</option>
+          <option value="codex">Solo Codex (OpenAI)</option>
+        </select>
+      </label>
+      <div><span class="label">Credenciales</span><p class="hint">Solo se guardan en este ordenador y no se vuelven a mostrar. Deja vacío lo que no quieras cambiar.</p></div>
+      <label><span>Claude <span class="cred-st" data-cred="claude"></span></span>
+        <input id="cred-claude" type="password" autocomplete="off" placeholder="Token de «claude setup-token» (sk-ant-oat…) o API key (sk-ant-api…)" />
+      </label>
+      <label><span>OpenAI / Codex <span class="cred-st" data-cred="openai"></span></span>
+        <input id="cred-openai" type="password" autocomplete="off" placeholder="API key de platform.openai.com (sk-…)" />
+      </label>
+      <label><span>ElevenLabs (voz) <span class="cred-st" data-cred="elevenlabs"></span></span>
+        <input id="cred-elevenlabs" type="password" autocomplete="off" placeholder="elevenlabs.io → Developers → API Keys (permisos: voces y texto a voz)" />
+      </label>
+      <label><span>Brave Search (fotos, opcional) <span class="cred-st" data-cred="brave"></span></span>
+        <input id="cred-brave" type="password" autocomplete="off" placeholder="api.search.brave.com → API keys" />
+      </label>
+      <label>Carpeta de proyectos de CapCut (opcional)
+        <input id="cred-capcut" placeholder="Se detecta sola. Ej.: C:\Users\tu-usuario\AppData\Local\CapCut\User Data\Projects\com.lveditor.draft" />
+      </label>
+      <button id="save-keys" class="primary">Guardar</button>
+    </div>
+  </dialog>
+
+  <dialog id="ask" class="dlg small">
+    <h3 id="ask-title"></h3>
+    <p id="ask-text" class="hint"></p>
+    <textarea id="ask-input" rows="3" hidden></textarea>
+    <div class="dlg-actions"><button data-close>Cancelar</button><button id="ask-ok" class="primary">Aceptar</button></div>
+  </dialog>
+
+  <div id="task" class="task" hidden>
+    <div class="task-head">
+      <span class="task-icon" id="task-icon"></span>
+      <div class="task-titles"><b id="task-title"></b><small id="task-step"></small></div>
+      <span id="task-time" class="time"></span>
+    </div>
+    <p id="task-now" class="task-now"></p>
+    <div class="task-bar"><i id="task-bar"></i></div>
+    <details id="task-details"><summary>Ver detalles</summary><ol id="task-log"></ol></details>
+    <div class="task-actions"><button id="task-min" class="ghost">Minimizar</button><button id="task-close">Cancelar</button></div>
+  </div>
+  <div id="toasts" class="toasts"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -409,8 +409,9 @@ function drawCaptions(ctx, tl, t) {
 // ---------- reproductor ----------
 
 export class Player {
-  constructor(canvas) {
+  constructor(canvas, draw = drawFrame) {
     this.canvas = canvas;
+    this.draw = draw; // otro tipo de vídeo puede traer su propio render de fotograma
     this.ctx = canvas.getContext('2d');
     canvas.width = W;
     canvas.height = H;
@@ -435,7 +436,7 @@ export class Player {
         this.dirty = false;
         // en pausa al principio, la intro aún no ha entrado y el lienzo parece vacío: mostrar la primera escena ya montada
         const poster = !this.playing && this.t < 0.2 && this.tl.scenes?.length ? Math.min(1.5, this.tl.scenes[0].end - 0.05) : this.t;
-        drawFrame(this.ctx, this.tl, poster, this.opts);
+        this.draw(this.ctx, this.tl, poster, this.opts);
         this.emit('time');
       }
       requestAnimationFrame(loop);

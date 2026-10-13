@@ -22,7 +22,7 @@ async function post(url, body, json = false) {
 }
 
 /**
- * opts: { width, height, fps, t0, t1, renderFrame(ctx, t), audio (Blob|null), filename, onProgress(p, info), signal }
+ * opts: { width, height, fps, t0, t1, renderFrame(ctx, t) (puede ser async), audio (Blob|null), filename, onProgress(p, info), signal }
  * Devuelve { url, file, bytes }.
  */
 export async function exportVideo({ width, height, fps = 30, t0 = 0, t1, renderFrame, audio, filename, onProgress, signal }) {
@@ -58,7 +58,7 @@ export async function exportVideo({ width, height, fps = 30, t0 = 0, t1, renderF
     for (let i = 0; i < total; i++) {
       if (signal?.aborted) throw new Error('Exportación cancelada');
       if (encErr) throw encErr;
-      renderFrame(ctx, t0 + i / fps);
+      await renderFrame(ctx, t0 + i / fps);
       const frame = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / fps), duration: Math.round(1e6 / fps) });
       encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
       frame.close();

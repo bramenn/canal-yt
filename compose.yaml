@@ -1,0 +1,28 @@
+# docker compose up --build   → http://localhost:4322 (estudio de fútbol)
+# Claves en un .env junto a este archivo (ver .env.example). Solo hace falta la de Claude Code.
+services:
+  futbol:
+    build:
+      context: .
+      dockerfile: futbol/Dockerfile
+    ports:
+      - "127.0.0.1:4322:4322"
+    environment:
+      # sin valor: se pasan solo si están definidas en .env o en el entorno
+      - CLAUDE_CODE_OAUTH_TOKEN
+      - ANTHROPIC_API_KEY
+      - CODEX_API_KEY        # Codex (respaldo): API key de platform.openai.com
+      - AI_ENGINE            # auto | claude | codex
+      - FISH_API_KEY
+      - ELEVENLABS_API_KEY
+      - BRAVE_API_KEY
+    volumes:
+      - futbol-projects:/app/futbol/projects   # proyectos, fotos, voz y MP4 exportados
+      - secrets:/app/.secrets                  # claves guardadas desde la app
+      - cache:/home/node/.cache                # modelo de Whisper (se descarga una vez)
+    restart: unless-stopped
+
+volumes:
+  futbol-projects:
+  secrets:
+  cache:
