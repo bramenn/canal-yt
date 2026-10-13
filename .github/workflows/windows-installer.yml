@@ -92,7 +92,10 @@ jobs:
           git clone --quiet https://github.com/sun-guannan/CapCutAPI dist/app/CapCutAPI
           git -C dist/app/CapCutAPI checkout --quiet $env:CAPCUT_API_REF
           Remove-Item -Recurse -Force dist/app/CapCutAPI/.git
-          & dist/app/python/python.exe -m pip install --no-warn-script-location -r dist/app/CapCutAPI/requirements.txt
+          # algunas dependencias (oss2, crcmod…) solo vienen como código fuente: el Python portátil necesita setuptools
+          # y compilar sin entorno aislado (en el aislado no ve sus propias librerías)
+          & dist/app/python/python.exe -m pip install --no-warn-script-location setuptools wheel
+          & dist/app/python/python.exe -m pip install --no-warn-script-location --no-build-isolation -r dist/app/CapCutAPI/requirements.txt
           if ($LASTEXITCODE) { exit 1 }
           # todo en local: nunca sube borradores a servicios externos
           '{ "draft_profile": "capcut_legacy", "is_capcut_env": true, "draft_domain": "https://www.capcutapi.top", "port": 9001, "preview_router": "/draft/downloader", "is_upload_draft": false }' |
