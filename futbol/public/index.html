@@ -218,8 +218,12 @@
         <input id="cred-claude" type="password" autocomplete="off" placeholder="Token de «claude setup-token» (sk-ant-oat…) o API key (sk-ant-api…)" />
       </label>
       <label><span>OpenAI / Codex <span class="cred-st" data-cred="openai"></span></span>
-        <input id="cred-openai" type="password" autocomplete="off" placeholder="API key de platform.openai.com (sk-…)" />
+        <input id="cred-openai" type="password" autocomplete="off" placeholder="API key de platform.openai.com (de pago por uso, aparte de ChatGPT)" />
       </label>
+      <div class="cred-actions">
+        <button type="button" id="codex-login" class="primary">Usar mi cuenta de ChatGPT (Plus/Pro)</button>
+        <button type="button" id="clear-openai" class="ghost">Quitar API key</button>
+      </div>
       <label><span>ElevenLabs (voz) <span class="cred-st" data-cred="elevenlabs"></span></span>
         <input id="cred-elevenlabs" type="password" autocomplete="off" placeholder="elevenlabs.io → Developers → API Keys (permisos: voces y texto a voz)" />
       </label>

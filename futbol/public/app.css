@@ -234,6 +234,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .65); backdrop-filter: blur(2px); }
 .clip-use-row { display: flex; gap: 10px; align-items: end; }
 .clip-use-row label { width: 110px; }
 .settings { display: grid; gap: 14px; }
+.cred-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: -6px; }
+.task-now a { color: var(--accent); font-weight: 600; }
 .cred-st { font-size: 12px; margin-left: 6px; }
 .cred-st.ok { color: #86efac; }
 .status-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 14px; }

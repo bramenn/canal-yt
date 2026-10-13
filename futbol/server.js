@@ -15,7 +15,8 @@ import { autoClips } from './lib/autoclips.js';
 import { makeThumbs } from './lib/thumbs.js';
 import { pickPhotos } from './lib/photopick.js';
 import { exportCapcut, capcutStatus } from './lib/capcut.js';
-import { applyCreds, credsStatus, saveCreds } from './lib/creds.js';
+import { applyCreds, credsStatus, saveCreds, clearCred } from './lib/creds.js';
+import { codexLogin } from '../lib/codex.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.dirname(HERE);
@@ -76,6 +77,14 @@ http.createServer(async (req, res) => {
         }
         return sendJSON(res, 200, { ok: true });
       } catch (e) { return sendJSON(res, 400, { error: e.message }); }
+    }
+    if (p === '/api/credentials/clear' && req.method === 'POST') {
+      try { return sendJSON(res, 200, await clearCred((await readBody(req)).id)); } catch (e) { return sendJSON(res, 400, { error: e.message }); }
+    }
+    // Codex con la suscripción de ChatGPT (Plus/Pro): `codex login` abre la página de OpenAI; sin API key de por medio
+    if (p === '/api/codex/login' && req.method === 'POST') {
+      await clearCred('openai'); // una API key guardada mandaría sobre la sesión de ChatGPT
+      return sse(res, (emit) => codexLogin(emit));
     }
     // motor de IA: 'auto' (Claude Code y, si falla, Codex) | 'claude' | 'codex'; se recuerda entre reinicios
     if (p === '/api/engine' && req.method === 'POST') {

@@ -926,7 +926,9 @@ async function refreshStatus() {
   const cs = { ...(status.creds ?? {}), elevenlabs: { configured: status.tts?.elevenlabs?.configured }, brave: { configured: status.brave?.configured } };
   for (const el of $$('.cred-st')) {
     const c = cs[el.dataset.cred];
-    const session = !c?.configured && ai[el.dataset.cred === 'openai' ? 'codex' : el.dataset.cred]?.loggedIn;
+    const eng = ai[el.dataset.cred === 'openai' ? 'codex' : el.dataset.cred];
+    const session = !c?.configured && eng?.loggedIn;
+    if (el.dataset.cred === 'openai' && /chatgpt/i.test(eng?.detail ?? '')) { el.textContent = '✓ con tu cuenta de ChatGPT'; el.classList.add('ok'); continue; }
     el.textContent = c?.configured ? `✓ guardada${c.source === 'entorno' ? ' (en .env)' : ''}` : session ? '✓ usando la sesión iniciada en este ordenador' : '· sin poner';
     el.classList.toggle('ok', !!(c?.configured || session));
   }
@@ -940,6 +942,24 @@ async function refreshStatus() {
   ].join('');
 }
 $('#open-settings').onclick = () => { refreshStatus(); $('#settings').showModal(); };
+// Codex con la suscripción de ChatGPT: abre la página de OpenAI para entrar con tu cuenta (sin API key)
+$('#codex-login').onclick = async () => {
+  if (status.creds?.openai?.configured && !(await ask({ title: 'Usar tu cuenta de ChatGPT', text: 'Se quitará la API key de OpenAI guardada, porque si está puesta Codex la usa en lugar de tu suscripción.', ok: 'Seguir' }))) return;
+  $('#settings').close();
+  runTask('Iniciar sesión con ChatGPT', async (ui) => {
+    await streamTo(ui, '/api/codex/login', {}, (e) => {
+      if (!e.url) return;
+      window.open(e.url, '_blank');
+      $('#task-now').innerHTML = `Entra con tu cuenta de ChatGPT en la página de OpenAI y autoriza a Codex. <a href="${esc(e.url)}" target="_blank" rel="noopener">Abrir la página</a>`;
+    });
+    await refreshStatus();
+    return 'Codex ya usa tu cuenta de ChatGPT. En ⚙ Ajustes puedes elegir «Solo Codex» o dejarlo en Automático.';
+  });
+};
+$('#clear-openai').onclick = async () => {
+  try { await postJSON('/api/credentials/clear', { id: 'openai' }); await refreshStatus(); toast('API key de OpenAI quitada', 'ok'); }
+  catch (e) { toast(e.message, 'bad'); }
+};
 $('#engine').onchange = async (e) => {
   try { await postJSON('/api/engine', { engine: e.target.value }); toast(`Motor: ${e.target.selectedOptions[0].textContent}`, 'ok'); refreshStatus(); }
   catch (err) { toast(err.message, 'bad'); }
