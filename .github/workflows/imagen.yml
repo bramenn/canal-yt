@@ -1,0 +1,51 @@
+# Imagen de Estudio Fútbol para el k3s: se construye en GitHub y se sube a ghcr.io/bramenn/estudio-futbol
+# con dos etiquetas: el commit (para desplegar una versión concreta) y latest.
+# Se lanza sola al subir cambios de la app, o a mano desde Actions → «Imagen» → Run workflow.
+name: Imagen
+
+on:
+  push:
+    branches: [master, feature/nuevoTipoVideo]
+    paths: [futbol/**, lib/**, public/js/**, package.json, package-lock.json, .github/workflows/imagen.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: imagen-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Construir y subir
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: futbol/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/bramenn/estudio-futbol:${{ github.sha }}
+            ghcr.io/bramenn/estudio-futbol:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          # las capas pesadas (Python, Claude Code, Codex) se reutilizan entre ejecuciones
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Resumen
+        run: |
+          echo "### Imagen lista" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`ghcr.io/bramenn/estudio-futbol:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Desplegar: \`kubectl -n estudio-futbol set image deploy/estudio-futbol app=ghcr.io/bramenn/estudio-futbol:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"

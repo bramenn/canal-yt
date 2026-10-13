@@ -25,7 +25,7 @@ Opcional: `yt-dlp` para estudiar más canales (ya hay uno en `.tools/venv`).
 ## Estudio de fútbol (`futbol/`)
 App aparte para vídeos tipo «La Garza»: biografías narradas (5-8 min) sobre fotos reales con zoom lento y fundido, sin rótulos.
 ```bash
-npm run futbol     # → http://localhost:4322
+npm run futbol     # → http://localhost:4322 (carga .env: DATABASE_URL y claves)
 ```
 - **Guion** · Claude Code investiga y escribe en el estilo de `futbol/style/estilo.md` (estudiado de las transcripciones de `futbol/style/referencias/`). Cada segmento lleva sus **planos**: `cue` (palabras donde entra), qué se ve y una búsqueda.
 - **Fotos** · «Buscar fotos que faltan» rellena cada plano con el primer resultado descargable (DuckDuckGo → Brave → Bing; se descartan bancos con marca de agua). En cada plano puedes buscar y elegir otra, pegar una URL o subir un archivo. Los créditos de cada sitio van a la descripción.
@@ -33,10 +33,10 @@ npm run futbol     # → http://localhost:4322
 - **Transiciones** · por plano o automáticas: fundido, paso a negro al cambiar de sección, zoom con desenfoque, barrido con desenfoque de movimiento, destello o corte. Viñeta y grano de película suaves en todo el vídeo.
 - **Voz y MP4** · reutiliza `lib/tts`, `lib/align` y `lib/export`: un audio por segmento alineado con Whisper, así cada foto cambia en la palabra exacta.
 - Requisitos extra: `pip install ddgs yt-dlp` en `.tools/venv` (o `IMG_PYTHON=/ruta/python`). Brave es opcional: clave de api.search.brave.com en la app o `BRAVE_API_KEY`.
+- **Login y Postgres** · la app pide usuario y contraseña (scrypt, sesiones en cookie HttpOnly, bloqueo tras 5 fallos, comprobación de origen). Usuarios, sesiones, proyectos y ajustes viven en Postgres (`DATABASE_URL`, contenedor `futbol-db` en 127.0.0.1:5433); fotos, clips y audio siguen en disco. No hay registro público: `npm run user -- add <usuario> [--admin]` (también `passwd`, `list`, `del`), o el administrador desde ⚙ Ajustes. Los vídeos son compartidos; solo el administrador cambia claves y motor de IA.
 - **Guion propio** · en el inicio, «📝 Ya tengo el guion»: el texto se divide en partes sin IA y se usa tal cual; la IA solo elige las imágenes de cada frase, la miniatura y los títulos.
 - **Abrir en CapCut** · paso «Publicar»: crea un proyecto de CapCut (CapCutAPI) con las imágenes, los clips, las transiciones, la voz y subtítulos opcionales. En Windows se escribe directamente en la carpeta de proyectos de CapCut; en Linux se importa en el CapCut de Wine con `import-draft.sh`. Siempre queda además un ZIP.
 - **Credenciales** · en ⚙ Ajustes: Claude (token de `claude setup-token` o API key), OpenAI/Codex, ElevenLabs, Brave y la carpeta de CapCut. Se guardan en `.secrets/` de ese ordenador.
-- **Instalador de Windows** · `.github/workflows/windows-installer.yml` genera `EstudioFutbol-Setup-<versión>.exe` con todo incluido (Node, Python y sus librerías, ffmpeg, Claude Code, Codex, CapCutAPI) y prueba la app en Windows antes de empaquetarla. Se lanza desde Actions → «Instalador de Windows» → Run workflow (el workflow tiene que estar en la rama principal), o empujando una etiqueta `v*` (además lo publica en Releases). Se instala por usuario, sin administrador; los vídeos van a `Documentos\Estudio Futbol`.
 - **Motor de IA** · Claude Code o Codex CLI (`lib/codex.js`). En ⚙ Ajustes: «Automático» (por defecto) usa Claude Code y, si falla —límite de uso, sesión caducada…—, repite la tarea con Codex; o fija uno. Codex necesita `codex login` (o `CODEX_API_KEY`). También con `AI_ENGINE=auto|claude|codex`.
 - **Con Docker**: `cp .env.example .env`, pon `CLAUDE_CODE_OAUTH_TOKEN` (sale de `claude setup-token`) o `ANTHROPIC_API_KEY`, y `docker compose up --build` (o `podman-compose up --build`). La imagen trae Node, ffmpeg, Claude Code, ddgs y faster-whisper; proyectos, claves y el modelo de Whisper viven en volúmenes. Los MP4 se descargan desde el navegador al exportar.
 - Proyectos, audio, fotos y exportaciones en `futbol/projects/` (fuera de git). Las claves de voz se comparten con el estudio principal (`.secrets/`).

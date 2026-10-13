@@ -7,7 +7,10 @@ services:
       dockerfile: futbol/Dockerfile
     ports:
       - "127.0.0.1:4322:4322"
+    depends_on: [db]
     environment:
+      # usuarios, sesiones y proyectos en Postgres (servicio db)
+      - DATABASE_URL=postgres://futbol:${FUTBOL_DB_PASSWORD:?pon FUTBOL_DB_PASSWORD en .env}@db:5432/futbol
       # sin valor: se pasan solo si están definidas en .env o en el entorno
       - CLAUDE_CODE_OAUTH_TOKEN
       - ANTHROPIC_API_KEY
@@ -22,7 +25,18 @@ services:
       - cache:/home/node/.cache                # modelo de Whisper (se descarga una vez)
     restart: unless-stopped
 
+  db:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      - POSTGRES_USER=futbol
+      - POSTGRES_DB=futbol
+      - POSTGRES_PASSWORD=${FUTBOL_DB_PASSWORD:?pon FUTBOL_DB_PASSWORD en .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
 volumes:
+  pgdata:
   futbol-projects:
   secrets:
   cache:

@@ -20,6 +20,8 @@
     </nav>
     <div class="top-actions">
       <button id="home-btn" class="ghost" hidden>← Mis vídeos</button>
+      <span id="me" class="me"></span>
+      <button id="logout" class="ghost" title="Cerrar sesión">Salir</button>
       <button id="open-settings" class="icon" title="Ajustes (claves y estado)">⚙️</button>
     </div>
   </header>
@@ -206,6 +208,24 @@
     <div class="dlg-head"><h3>Ajustes</h3><button class="icon" data-close>✕</button></div>
     <div class="settings">
       <div class="field"><span class="label">Estado</span><ul id="status-list" class="status-list"></ul></div>
+      <div class="field"><span class="label">Cambiar mi contraseña</span>
+        <div class="pw-grid">
+          <input id="pw-current" type="password" autocomplete="current-password" placeholder="Contraseña actual" />
+          <input id="pw-next" type="password" autocomplete="new-password" placeholder="Nueva (mín. 10 caracteres)" />
+          <input id="pw-repeat" type="password" autocomplete="new-password" placeholder="Repite la nueva" />
+          <button id="pw-save">Cambiar</button>
+        </div>
+      </div>
+      <div id="admin-only" class="settings">
+      <div class="field"><span class="label">Usuarios</span>
+        <ul id="users" class="users"></ul>
+        <div class="pw-grid">
+          <input id="nu-name" autocomplete="off" autocapitalize="none" placeholder="Usuario nuevo" />
+          <input id="nu-pass" type="password" autocomplete="new-password" placeholder="Contraseña (mín. 10)" />
+          <label class="check"><input type="checkbox" id="nu-admin" /><span>Administrador</span></label>
+          <button id="nu-add">Crear</button>
+        </div>
+      </div>
       <label>Inteligencia artificial que hace el trabajo
         <select id="engine">
           <option value="auto">Automático: Claude Code y, si falla, Codex</option>
@@ -234,6 +254,7 @@
         <input id="cred-capcut" placeholder="Se detecta sola. Ej.: C:\Users\tu-usuario\AppData\Local\CapCut\User Data\Projects\com.lveditor.draft" />
       </label>
       <button id="save-keys" class="primary">Guardar</button>
+      </div>
     </div>
   </dialog>
 

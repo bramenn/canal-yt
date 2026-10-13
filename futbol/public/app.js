@@ -7,6 +7,14 @@ import { exportVideo, canExportFast, downloadUrl } from '/shared/exporter.js';
 import { drawThumb, loadImg, fontReady, TW, TH } from './thumb.js';
 import { drawFrame, preload, W, H, setRedraw, setLive, seekFor, endExport, TRANSITIONS, transitionOf } from './render.js';
 
+// sesión caducada o cerrada en otro sitio: de vuelta al login
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  const r = await nativeFetch(...args);
+  if (r.status === 401) location.replace('/login');
+  return r;
+};
+
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -941,7 +949,7 @@ async function refreshStatus() {
     ok(status.brave?.configured, 'Brave Search activo', 'Brave sin clave (se usan otros buscadores)'),
   ].join('');
 }
-$('#open-settings').onclick = () => { refreshStatus(); $('#settings').showModal(); };
+$('#open-settings').onclick = () => { refreshStatus(); renderUsers(); $('#settings').showModal(); };
 // Codex con la suscripción de ChatGPT: abre la página de OpenAI para entrar con tu cuenta (sin API key)
 $('#codex-login').onclick = async () => {
   if (status.creds?.openai?.configured && !(await ask({ title: 'Usar tu cuenta de ChatGPT', text: 'Se quitará la API key de OpenAI guardada, porque si está puesta Codex la usa en lugar de tu suscripción.', ok: 'Seguir' }))) return;
@@ -950,7 +958,9 @@ $('#codex-login').onclick = async () => {
     await streamTo(ui, '/api/codex/login', {}, (e) => {
       if (!e.url) return;
       window.open(e.url, '_blank');
-      $('#task-now').innerHTML = `Entra con tu cuenta de ChatGPT en la página de OpenAI y autoriza a Codex. <a href="${esc(e.url)}" target="_blank" rel="noopener">Abrir la página</a>`;
+      $('#task-now').innerHTML = e.code
+        ? `1. <a href="${esc(e.url)}" target="_blank" rel="noopener">Abre la página de OpenAI</a> y entra con tu cuenta de ChatGPT.<br>2. Escribe este código: <b class="big-code">${esc(e.code)}</b>`
+        : `Entra con tu cuenta de ChatGPT en la página de OpenAI y autoriza a Codex. <a href="${esc(e.url)}" target="_blank" rel="noopener">Abrir la página</a>`;
     });
     await refreshStatus();
     return 'Codex ya usa tu cuenta de ChatGPT. En ⚙ Ajustes puedes elegir «Solo Codex» o dejarlo en Automático.';
@@ -983,7 +993,46 @@ addEventListener('hashchange', () => {
   getJSON(`/api/projects/${id}`).then((p) => openProject(p, st)).catch(showHome);
 });
 
+// ================= sesión, contraseña y usuarios =================
+let me = null;
+$('#logout').onclick = async () => { if (project) await saveNow(); await postJSON('/api/logout', {}); location.replace('/login'); };
+
+$('#pw-save').onclick = async () => {
+  const next = $('#pw-next').value;
+  if (next !== $('#pw-repeat').value) return toast('Las contraseñas nuevas no coinciden', 'bad');
+  try {
+    await postJSON('/api/password', { current: $('#pw-current').value, next });
+    for (const id of ['pw-current', 'pw-next', 'pw-repeat']) $(`#${id}`).value = '';
+    toast('Contraseña cambiada. Se cerraron tus otras sesiones.', 'ok');
+  } catch (e) { toast(e.data?.error || e.message, 'bad'); }
+};
+
+async function renderUsers() {
+  if (!me?.isAdmin) return;
+  const users = await getJSON('/api/users');
+  $('#users').innerHTML = users.map((u) => `<li>👤 <b>${esc(u.username)}</b>${u.is_admin ? ' <span class="pill">admin</span>' : ''}${u.id === me.id ? ' <span class="hint">(tú)</span>' : `<button class="danger" data-del-user="${u.id}">Borrar</button>`}</li>`).join('');
+}
+$('#users').onclick = async (e) => {
+  const id = e.target.dataset.delUser;
+  if (!id) return;
+  const name = e.target.closest('li').querySelector('b').textContent;
+  if (!(await ask({ title: `¿Borrar a «${name}»?`, text: 'No podrá volver a entrar. Los vídeos se quedan.', ok: 'Borrar', danger: true }))) return;
+  await fetch(`/api/users/${id}`, { method: 'DELETE' });
+  renderUsers();
+};
+$('#nu-add').onclick = async () => {
+  try {
+    await postJSON('/api/users', { username: $('#nu-name').value, password: $('#nu-pass').value, isAdmin: $('#nu-admin').checked });
+    toast(`Usuario «${$('#nu-name').value.trim().toLowerCase()}» creado`, 'ok');
+    $('#nu-name').value = $('#nu-pass').value = ''; $('#nu-admin').checked = false;
+    renderUsers();
+  } catch (e) { toast(e.data?.error || e.message, 'bad'); }
+};
+
 // ================= arranque =================
+me = await getJSON('/api/me');
+$('#me').textContent = `👤 ${me.username}`;
+$('#admin-only').hidden = !me.isAdmin;
 await refreshStatus();
 const [hashId, hashStep] = location.hash.slice(1).split('/');
 if (hashId) getJSON(`/api/projects/${hashId}`).then((p) => openProject(p, hashStep)).catch(showHome);

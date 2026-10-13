@@ -11,6 +11,9 @@ RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir ddgs f
 RUN npm install -g @anthropic-ai/claude-code @openai/codex && npm cache clean --force
 
 WORKDIR /app
+# cliente de Postgres (única dependencia npm)
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 COPY lib lib
 COPY public/js public/js
 COPY futbol futbol

@@ -16,6 +16,8 @@ import { makeThumbs } from './lib/thumbs.js';
 import { pickPhotos } from './lib/photopick.js';
 import { exportCapcut, capcutStatus } from './lib/capcut.js';
 import { applyCreds, credsStatus, saveCreds, clearCred } from './lib/creds.js';
+import { migrate, listProjects as dbProjects, getProject, saveProject, deleteProject, getSetting, setSetting } from './lib/db.js';
+import { login, startSession, endSession, userOf, sameOrigin, createUser, setPassword, listUsers, deleteUser, countUsers } from './lib/auth.js';
 import { codexLogin } from '../lib/codex.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -31,21 +33,22 @@ const PORT = Number(process.env.PORT || 4322);
 const STATIC = { '/engine/': path.join(REPO, 'public/js/engine'), '/shared/': path.join(REPO, 'public/js'), '/': path.join(HERE, 'public') };
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
 await mkdir(PROJECTS, { recursive: true });
-const SETTINGS = path.join(PROJECTS, 'settings.json');
-const readSettings = () => readFile(SETTINGS, 'utf8').then(JSON.parse).catch(() => ({}));
-if (!process.env.AI_ENGINE) setEngine((await readSettings()).engine);
+// Postgres: tablas y, la primera vez, los proyectos y ajustes que había en archivos JSON
+const imported = await migrate(PROJECTS);
+if (imported) console.log(`  ${imported} proyectos importados a Postgres (los archivos JSON se conservan como copia)`);
+if (!process.env.AI_ENGINE) setEngine(await getSetting('engine'));
 // credenciales y carpeta de CapCut puestas en ⚙ Ajustes
 applyCreds();
-{ const s = await readSettings(); if (s.capcutDrafts && !process.env.CAPCUT_DRAFTS) process.env.CAPCUT_DRAFTS = s.capcutDrafts; }
+{ const d = await getSetting('capcutDrafts'); if (d && !process.env.CAPCUT_DRAFTS) process.env.CAPCUT_DRAFTS = d; }
+if (!(await countUsers())) console.log('\n  ⚠️  No hay usuarios: crea el primero con  npm run user -- add <usuario> --admin\n');
 
 const claude = (opts, emit) => runClaude({ system: systemPrompt(), cwd: path.join(HERE, 'style'), ...opts }, emit);
 const safeId = (id) => String(id).replace(/[^a-z0-9_-]/gi, '').slice(0, 80);
 
 async function listProjects() {
   const out = [];
-  for (const f of (await readdir(PROJECTS)).filter((x) => x.endsWith('.json') && x !== 'settings.json')) {
+  for (const p of await dbProjects()) {
     try {
-      const p = JSON.parse(await readFile(path.join(PROJECTS, f), 'utf8'));
       const shots = (p.video?.segments ?? []).flatMap((s) => s.shots ?? []);
       // portada: la foto del jugador de la miniatura elegida o la primera foto del vídeo
       const cover = p.thumbs?.[p.thumbPick ?? 0]?.bg?.url ?? shots.find((s) => s.media && s.media.type !== 'video')?.media.url ?? null;
@@ -55,12 +58,72 @@ async function listProjects() {
   return out.sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0));
 }
 
+async function serveStatic(res, file) {
+  const st = await stat(file).catch(() => null);
+  if (!st?.isFile()) return sendJSON(res, 404, { error: 'not found' });
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+  res.end(await readFile(file));
+}
+
+// el servidor solo escucha en 127.0.0.1: si hay un proxy delante (ngrok), la IP real es la ÚLTIMA de X-Forwarded-For
+// (la añade el proxy; las anteriores las puede inventar quien hace la petición)
+// con CLIENT_IP_HEADER (p. ej. cf-connecting-ip detrás de Cloudflare) se usa esa cabecera, que pone el proxy de confianza
+const clientIp = (req) => (process.env.CLIENT_IP_HEADER && String(req.headers[process.env.CLIENT_IP_HEADER.toLowerCase()] ?? '').trim())
+  || String(req.headers['x-forwarded-for'] ?? '').split(',').pop().trim() || req.socket.remoteAddress;
+
 http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   const sp = url.searchParams;
   let m;
   try {
+    // ---- login (lo único accesible sin sesión, junto a la página de login y sus estilos) ----
+    if (!sameOrigin(req)) return sendJSON(res, 403, { error: 'Petición de otro origen' });
+    if (p === '/login' || p === '/login.html') return serveStatic(res, path.join(HERE, 'public', 'login.html'));
+    if (p === '/app.css' || p === '/favicon.ico') return serveStatic(res, path.join(HERE, 'public', p.slice(1)));
+    if (p === '/api/login' && req.method === 'POST') {
+      const b = await readBody(req);
+      try {
+        const u = await login(b.username, b.password, clientIp(req));
+        await startSession(res, req, u.id);
+        return sendJSON(res, 200, { username: u.username, isAdmin: u.isAdmin });
+      } catch (e) { return sendJSON(res, 401, { error: e.message }); }
+    }
+    if (p === '/api/logout' && req.method === 'POST') { await endSession(res, req); return sendJSON(res, 200, { ok: true }); }
+
+    const user = await userOf(req);
+    if (!user) {
+      if (p.startsWith('/api/')) return sendJSON(res, 401, { error: 'Inicia sesión' });
+      res.writeHead(302, { Location: '/login' });
+      return res.end();
+    }
+    // lo que cambia claves, motor de IA o usuarios: solo el administrador
+    const ADMIN = /^\/api\/(credentials|engine|codex\/login|brave\/key|users)/.test(p) || (p === '/api/tts/elevenlabs/key' && req.method === 'POST');
+    if (ADMIN && !user.isAdmin) return sendJSON(res, 403, { error: 'Solo el administrador puede cambiar esto' });
+
+    if (p === '/api/me') return sendJSON(res, 200, user);
+    if (p === '/api/password' && req.method === 'POST') {
+      const b = await readBody(req);
+      try {
+        await login(user.username, b.current, clientIp(req)); // la actual tiene que ser correcta
+        await setPassword(user.id, b.next);
+        await startSession(res, req, user.id); // las demás sesiones se cierran; esta sigue
+        return sendJSON(res, 200, { ok: true });
+      } catch (e) { return sendJSON(res, 400, { error: e.message.replace('Usuario o contraseña incorrectos', 'La contraseña actual no es correcta') }); }
+    }
+    // ---- usuarios (administrador) ----
+    if (p === '/api/users' && req.method === 'GET') return sendJSON(res, 200, await listUsers());
+    if (p === '/api/users' && req.method === 'POST') {
+      const b = await readBody(req);
+      try { await createUser(b.username, b.password, !!b.isAdmin); return sendJSON(res, 200, await listUsers()); }
+      catch (e) { return sendJSON(res, 400, { error: e.message }); }
+    }
+    if ((m = p.match(/^\/api\/users\/(\d+)$/)) && req.method === 'DELETE') {
+      if (Number(m[1]) === user.id) return sendJSON(res, 400, { error: 'No puedes borrarte a ti mismo' });
+      await deleteUser(Number(m[1]));
+      return sendJSON(res, 200, await listUsers());
+    }
+
     if (p === '/api/status') {
       return sendJSON(res, 200, { tts: tts.statusAll(), align: await aligner.status(), brave: braveStatus(), ai: await enginesStatus(), capcut: capcutStatus(), creds: credsStatus() });
     }
@@ -73,7 +136,7 @@ http.createServer(async (req, res) => {
         if (b.brave?.trim()) await setBraveKey(b.brave.trim());
         if (typeof b.capcutDrafts === 'string') {
           process.env.CAPCUT_DRAFTS = b.capcutDrafts.trim();
-          await writeFile(SETTINGS, JSON.stringify({ ...(await readSettings()), capcutDrafts: b.capcutDrafts.trim() }));
+          await setSetting('capcutDrafts', b.capcutDrafts.trim());
         }
         return sendJSON(res, 200, { ok: true });
       } catch (e) { return sendJSON(res, 400, { error: e.message }); }
@@ -89,7 +152,7 @@ http.createServer(async (req, res) => {
     // motor de IA: 'auto' (Claude Code y, si falla, Codex) | 'claude' | 'codex'; se recuerda entre reinicios
     if (p === '/api/engine' && req.method === 'POST') {
       const engine = setEngine((await readBody(req)).engine);
-      await writeFile(SETTINGS, JSON.stringify({ ...(await readSettings()), engine }));
+      await setSetting('engine', engine);
       return sendJSON(res, 200, { engine });
     }
 
@@ -283,19 +346,14 @@ http.createServer(async (req, res) => {
     if (p === '/api/projects' && req.method === 'POST') {
       const project = await readBody(req);
       project.id = safeId(project.id || Date.now().toString(36));
-      project.updated = Date.now();
-      await writeFile(path.join(PROJECTS, `${project.id}.json`), JSON.stringify(project, null, 2));
-      return sendJSON(res, 200, { id: project.id, updated: project.updated });
+      const updated = await saveProject(project, user.id);
+      return sendJSON(res, 200, { id: project.id, updated });
     }
     if ((m = p.match(/^\/api\/projects\/([\w-]+)$/))) {
-      const file = path.join(PROJECTS, `${safeId(m[1])}.json`);
-      if (!existsSync(file)) return sendJSON(res, 404, { error: 'No existe' });
-      if (req.method === 'GET') return sendJSON(res, 200, JSON.parse(await readFile(file, 'utf8')));
-      if (req.method === 'DELETE') { // a la papelera, recuperable a mano
-        await mkdir(path.join(PROJECTS, '.papelera'), { recursive: true });
-        await rename(file, path.join(PROJECTS, '.papelera', `${safeId(m[1])}-${Date.now()}.json`));
-        return sendJSON(res, 200, { ok: true });
-      }
+      const id = safeId(m[1]);
+      if (req.method === 'GET') { const pj = await getProject(id); return pj ? sendJSON(res, 200, pj) : sendJSON(res, 404, { error: 'No existe' }); }
+      // a la papelera (deleted_at): recuperable desde Postgres
+      if (req.method === 'DELETE') return (await deleteProject(id)) ? sendJSON(res, 200, { ok: true }) : sendJSON(res, 404, { error: 'No existe' });
     }
 
     // ---- estáticos: la app (futbol/public) y el motor compartido (public/js) ----
@@ -303,10 +361,7 @@ http.createServer(async (req, res) => {
     const base = STATIC[prefix];
     const file = path.normalize(path.join(base, p === '/' ? 'index.html' : decodeURIComponent(p.slice(prefix.length))));
     if (!file.startsWith(base)) return sendJSON(res, 403, { error: 'forbidden' });
-    const st = await stat(file).catch(() => null);
-    if (!st?.isFile()) return sendJSON(res, 404, { error: 'not found' });
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-    res.end(await readFile(file));
+    return serveStatic(res, file);
   } catch (err) {
     console.error(err);
     if (!res.headersSent) sendJSON(res, 500, { error: err.message });

@@ -1,0 +1,153 @@
+# Estudio Fútbol en el k3s de Contabo: https://ft.bramen.org (Cloudflare hace el TLS; aquí solo Ingress http).
+# Secretos (no van en este archivo; ver deploy/k8s/README.md):
+#   - futbol-db: POSTGRES_PASSWORD y DATABASE_URL
+#   - ghcr-pull: para descargar ghcr.io/bramenn/estudio-futbol
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: estudio-futbol
+---
+# ---------- Postgres: usuarios, sesiones, proyectos y ajustes ----------
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: estudio-futbol
+spec:
+  selector: { app: db }
+  ports: [{ port: 5432, targetPort: 5432 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  namespace: estudio-futbol
+spec:
+  serviceName: db
+  replicas: 1
+  selector: { matchLabels: { app: db } }
+  template:
+    metadata: { labels: { app: db } }
+    spec:
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:17-alpine
+          env:
+            - { name: POSTGRES_USER, value: futbol }
+            - { name: POSTGRES_DB, value: futbol }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: futbol-db, key: POSTGRES_PASSWORD } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ containerPort: 5432 }]
+          readinessProbe:
+            exec: { command: [pg_isready, -U, futbol, -d, futbol] }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 5Gi } }
+---
+# ---------- la app ----------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: estudio-data
+  namespace: estudio-futbol
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 40Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: estudio-futbol
+  namespace: estudio-futbol
+spec:
+  replicas: 1
+  # los datos están en un disco de un solo nodo: nunca dos copias a la vez
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: estudio-futbol } }
+  template:
+    metadata: { labels: { app: estudio-futbol } }
+    spec:
+      imagePullSecrets: [{ name: ghcr-pull }]
+      affinity:
+        nodeAffinity:
+          # Whisper, rembg y la exportación usan bastante memoria: mejor el nodo con más
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 50
+              preference: { matchExpressions: [{ key: kubernetes.io/hostname, operator: In, values: [mumen-rider] }] }
+      initContainers:
+        # local-path no aplica fsGroup: las carpetas se preparan para el usuario "node" (1000) de la imagen
+        - name: permisos
+          image: docker.io/library/busybox:1.37
+          command: [sh, -c, 'mkdir -p /data/projects /data/secrets /data/cache /data/codex /data/claude && chown -R 1000:1000 /data']
+          volumeMounts: [{ name: data, mountPath: /data }]
+      containers:
+        - name: app
+          image: ghcr.io/bramenn/estudio-futbol:latest
+          imagePullPolicy: Always
+          ports: [{ containerPort: 4322 }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: futbol-db, key: DATABASE_URL } }
+            - { name: SECURE_COOKIES, value: '1' }              # se entra por https (Cloudflare)
+            - { name: CLIENT_IP_HEADER, value: cf-connecting-ip } # IP real del visitante para el bloqueo de intentos
+            - { name: CODEX_DEVICE_AUTH, value: '1' }            # ChatGPT: login con código (no hay navegador en el servidor)
+          readinessProbe:
+            httpGet: { path: /login, port: 4322 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /login, port: 4322 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 250m, memory: 768Mi }
+            limits: { memory: 4Gi }
+          volumeMounts:
+            - { name: data, mountPath: /app/futbol/projects, subPath: projects }   # fotos, clips, voz, MP4
+            - { name: data, mountPath: /app/.secrets, subPath: secrets }           # claves de ⚙ Ajustes
+            - { name: data, mountPath: /home/node/.cache, subPath: cache }         # modelos de Whisper y rembg
+            - { name: data, mountPath: /home/node/.codex, subPath: codex }         # sesión de ChatGPT de Codex
+            - { name: data, mountPath: /home/node/.claude, subPath: claude }       # estado de Claude Code
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: estudio-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: estudio-futbol
+  namespace: estudio-futbol
+spec:
+  selector: { app: estudio-futbol }
+  ports: [{ port: 80, targetPort: 4322 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: estudio-futbol
+  namespace: estudio-futbol
+  annotations:
+    # subidas de fotos y del vídeo exportado (por trozos de ~4 MB)
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+    nginx.ingress.kubernetes.io/proxy-request-buffering: 'off'
+    # el progreso de las tareas llega en directo (SSE): sin búfer y con tiempo para tareas largas
+    nginx.ingress.kubernetes.io/proxy-buffering: 'off'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ft.bramen.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: estudio-futbol, port: { number: 80 } }
