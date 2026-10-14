@@ -58,10 +58,13 @@ async function listProjects() {
   return out.sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0));
 }
 
-async function serveStatic(res, file) {
+async function serveStatic(req, res, file) {
   const st = await stat(file).catch(() => null);
   if (!st?.isFile()) return sendJSON(res, 404, { error: 'not found' });
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+  // el navegador guarda la copia y pregunta si cambió: «304» sin cuerpo si sigue igual
+  const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+  if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' }); return res.end(); }
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache', ETag: etag });
   res.end(await readFile(file));
 }
 
@@ -79,8 +82,8 @@ http.createServer(async (req, res) => {
   try {
     // ---- login (lo único accesible sin sesión, junto a la página de login y sus estilos) ----
     if (!sameOrigin(req)) return sendJSON(res, 403, { error: 'Petición de otro origen' });
-    if (p === '/login' || p === '/login.html') return serveStatic(res, path.join(HERE, 'public', 'login.html'));
-    if (p === '/app.css' || p === '/favicon.ico') return serveStatic(res, path.join(HERE, 'public', p.slice(1)));
+    if (p === '/login' || p === '/login.html') return serveStatic(req, res, path.join(HERE, 'public', 'login.html'));
+    if (p === '/app.css' || p === '/favicon.ico') return serveStatic(req, res, path.join(HERE, 'public', p.slice(1)));
     if (p === '/api/login' && req.method === 'POST') {
       const b = await readBody(req);
       try {
@@ -361,7 +364,7 @@ http.createServer(async (req, res) => {
     const base = STATIC[prefix];
     const file = path.normalize(path.join(base, p === '/' ? 'index.html' : decodeURIComponent(p.slice(prefix.length))));
     if (!file.startsWith(base)) return sendJSON(res, 403, { error: 'forbidden' });
-    return serveStatic(res, file);
+    return serveStatic(req, res, file);
   } catch (err) {
     console.error(err);
     if (!res.headersSent) sendJSON(res, 500, { error: err.message });

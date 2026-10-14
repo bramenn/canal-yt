@@ -606,6 +606,9 @@ async function renderVoice() {
   if (!status.tts?.elevenlabs?.configured) { $('#voices').innerHTML = '<div class="empty">Falta la clave de ElevenLabs: ponla en ⚙ Ajustes.</div>'; return; }
   if (!voiceList) await searchVoices('');
   else drawVoices();
+  // sin voz todavía: tu voz clonada ya viene elegida
+  const fav = !v && !pickedVoice && voiceList?.find((x) => x.favorite);
+  if (fav) { pickedVoice = fav; renderVoice(); }
 }
 
 async function searchVoices(q) {
@@ -646,12 +649,11 @@ function toggleSample(btn) {
   sample.play().then(() => { btn.textContent = '❚❚'; }).catch((e) => toast(`No se pudo reproducir: ${e.message}`, 'bad'));
 }
 
-/** La voz para el modo automático: la última usada o la primera latina de tu cuenta. */
+/** La voz para el modo automático: la del proyecto, si no tu voz clonada, si no la última usada o la primera de tu cuenta. */
 async function defaultVoice() {
   if (project.voice) return { id: project.voice.voiceId, title: project.voice.voiceTitle };
-  const saved = store.get('voice');
-  if (saved) return saved;
-  try { const own = (await getJSON('/api/tts/elevenlabs/voices?q=')).items.find((v) => !v.library); return own ?? null; } catch { return null; }
+  const items = await getJSON('/api/tts/elevenlabs/voices?q=').then((r) => r.items).catch(() => []);
+  return items.find((v) => v.favorite) ?? store.get('voice') ?? items.find((v) => !v.library) ?? null;
 }
 
 async function doVoice(ui, voice) {
@@ -1034,10 +1036,12 @@ $('#nu-add').onclick = async () => {
 };
 
 // ================= arranque =================
+// todo a la vez: el servidor está lejos y cada petición en serie suma medio segundo
+const statusReady = refreshStatus();
+const [hashId, hashStep] = location.hash.slice(1).split('/');
+const opening = hashId && getJSON(`/api/projects/${hashId}`);
 me = await getJSON('/api/me');
 $('#me').textContent = `👤 ${me.username}`;
 $('#admin-only').hidden = !me.isAdmin;
-await refreshStatus();
-const [hashId, hashStep] = location.hash.slice(1).split('/');
-if (hashId) getJSON(`/api/projects/${hashId}`).then((p) => openProject(p, hashStep)).catch(showHome);
+if (opening) Promise.all([opening, statusReady]).then(([p]) => openProject(p, hashStep)).catch(showHome);
 else showHome();

@@ -7,6 +7,19 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/app.css" />
+  <!-- todos los módulos a la vez (si no, se descubren nivel a nivel: un viaje al servidor por nivel) -->
+  <link rel="modulepreload" href="/app.js" />
+  <link rel="modulepreload" href="/render.js" />
+  <link rel="modulepreload" href="/thumb.js" />
+  <link rel="modulepreload" href="/shared/api.js" />
+  <link rel="modulepreload" href="/shared/exporter.js" />
+  <link rel="modulepreload" href="/engine/timeline.js" />
+  <link rel="modulepreload" href="/engine/audio.js" />
+  <link rel="modulepreload" href="/engine/draw.js" />
+  <link rel="modulepreload" href="/engine/scenes.js" />
+  <link rel="modulepreload" href="/engine/logos.js" />
+  <link rel="modulepreload" href="/engine/object-list.js" />
+  <link rel="modulepreload" href="/engine/objects.js" />
 </head>
 <body>
   <header class="top">

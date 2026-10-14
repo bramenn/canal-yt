@@ -1,41 +1,33 @@
-// Imágenes de cada plano: búsqueda web (DuckDuckGo → Brave → Bing), descarga por URL o subida propia.
+// Imágenes de cada plano: búsqueda web (API de Brave), descarga por URL o subida propia.
 // Todo se guarda en <proyectos>/media/<proyecto>/<hash>.<ext> y se sirve en /media/...
 import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { readKey, keySource, saveKey } from '../../lib/tts/keys.js';
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 const TYPES = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/avif': '.avif', 'video/mp4': '.mp4' };
 const MAX = 25 * 1024 * 1024;
 const safe = (s) => String(s).replace(/[^a-z0-9_-]/gi, '').slice(0, 80) || 'proyecto';
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO = path.join(HERE, '..', '..');
-// mismo Python que el alineador (.tools/venv); necesita `pip install ddgs`
-const PY = process.env.IMG_PYTHON || process.env.ALIGN_PYTHON || (existsSync(path.join(REPO, '.tools/venv/bin/python')) ? path.join(REPO, '.tools/venv/bin/python') : 'python3');
 // bancos de imágenes: sus vistas previas llevan marca de agua
 const STOCK = /(^|\.)(alamy|gettyimages|shutterstock|istockphoto|dreamstime|depositphotos|123rf|stock\.adobe|alamyimages|imago-images|vecteezy)\./i;
 const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 const item = ({ image, thumbnail, width, height, title, page }) =>
   ({ url: image, thumb: thumbnail || image, width: Number(width) || 0, height: Number(height) || 0, title: title || '', credit: { source: page || image, site: host(page || image) } });
 
-function ddgs(backend, q) {
-  return new Promise((resolve, reject) => execFile(PY, [path.join(HERE, 'images.py'), backend, q], { timeout: 30000, maxBuffer: 8 << 20 }, (err, stdout, stderr) => {
-    if (err) return reject(new Error(String(stderr).trim().split('\n').pop() || err.message));
-    try { resolve(JSON.parse(stdout).map((r) => item({ ...r, page: r.url }))); } catch { reject(new Error('respuesta no válida')); }
-  }));
-}
-
 export const BRAVE_ENV = 'BRAVE_API_KEY';
 export const braveStatus = () => ({ configured: !!readKey('brave', BRAVE_ENV), source: keySource('brave', BRAVE_ENV) });
 export const setBraveKey = (key) => saveKey('brave', key);
 
+// ponytail: una búsqueda por segundo para todo el servidor (límite del plan gratuito de Brave); subir el ritmo si se paga un plan mayor
+let braveTurn = Promise.resolve();
 async function brave(q) {
   const key = readKey('brave', BRAVE_ENV);
-  if (!key) throw new Error('sin clave (api.search.brave.com)');
+  if (!key) throw new Error('sin clave: ponla en ⚙ Ajustes (api.search.brave.com)');
+  const turn = braveTurn;
+  braveTurn = turn.then(() => new Promise((r) => setTimeout(r, 1100)));
+  await turn;
   const u = new URL('https://api.search.brave.com/res/v1/images/search');
   u.searchParams.set('q', q); u.searchParams.set('count', '30'); u.searchParams.set('safesearch', 'strict');
   const r = await fetch(u, { headers: { 'X-Subscription-Token': key, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
@@ -60,19 +52,17 @@ export function mediaStore(root) {
   }
 
   return {
-    /** Busca fotos: DuckDuckGo → Brave (si hay clave) → Bing. Devuelve { engine, items: [{ thumb, url, title, width, height, credit }], errors }. */
+    /** Busca fotos con la API de Brave. Devuelve { engine, items: [{ thumb, url, title, width, height, credit }], errors }. */
     async search(q, retry = true) {
-      const errors = [];
-      for (const [engine, run] of [['DuckDuckGo', () => ddgs('duckduckgo', q)], ['Brave', () => brave(q)], ['Bing', () => ddgs('bing', q)]]) {
-        try {
-          const items = (await run()).filter((x) => x.url && !(x.width && x.width < 500) && !STOCK.test(host(x.url)) && !STOCK.test(x.credit.site));
-          if (items.length) return { engine, items, errors };
-          errors.push(`${engine}: sin resultados`);
-        } catch (e) { errors.push(`${engine}: ${e.message.slice(0, 160)}`); }
+      try {
+        const items = (await brave(q)).filter((x) => x.url && !(x.width && x.width < 500) && !STOCK.test(host(x.url)) && !STOCK.test(x.credit.site));
+        if (items.length) return { engine: 'Brave', items, errors: [] };
+        throw new Error('sin resultados');
+      } catch (e) {
+        // el plan gratuito de Brave limita a 1 búsqueda por segundo: un segundo intento suele bastar
+        if (retry && /429/.test(e.message)) { await new Promise((r) => setTimeout(r, 1500)); return this.search(q, false); }
+        throw new Error(`Brave: ${e.message.slice(0, 160)}`);
       }
-      // los buscadores sin API cortan a ratos (muchas búsquedas seguidas): un segundo intento suele bastar
-      if (retry) { await new Promise((r) => setTimeout(r, 2000)); return this.search(q, false); }
-      throw new Error(`Ningún buscador respondió · ${errors.join(' · ')}`);
     },
 
     /** Descarga una imagen de una URL (resultado de búsqueda o la que pegue el usuario). */
