@@ -16,6 +16,7 @@ import { makeThumb, firstFrame } from './lib/thumb.js';
 import { readdir, readFile } from 'node:fs/promises';
 import { makeShort, makeTiktok } from './lib/make.js';
 import { refreshStats } from './lib/stats.js';
+import { virality, learnings } from '../lib/virality.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // antes de cargar la voz: sus carpetas cuelgan de PROJECTS_DIR
@@ -31,6 +32,9 @@ await migrate();
 if (!process.env.AI_ENGINE) setEngine(await getSetting('engine'));
 if (!(await countUsers())) console.log('\n  ⚠️  No hay usuarios: crea el primero con  npm run user -- add <usuario> --admin\n');
 
+// lo aprendido de las cifras (qué funcionó y qué no) para la IA, sin repetir temas ni arranques
+const describe = (p) => ({ title: p.script?.title, hook: p.script?.lines?.[0]?.text, angle: `${p.story?.anime}: ${p.story?.angle}` });
+const learnFrom = async () => learnings(await listProjects(TABLE), describe);
 const safeId = (id) => String(id).replace(/[^a-z0-9_-]/gi, '').slice(0, 80);
 // las dos voces del canal (biblioteca de ElevenLabs): se elige una al crear o rehacer
 const VOICES = { mujer: { id: 'ajOR9IDAaubDK5qtLUqQ', title: 'Mujer' }, hombre: { id: 'qRUgOhnxGASxirG4fKjv', title: 'Hombre (David)' } };
@@ -56,10 +60,10 @@ const task = (res, run) => sse(res, (emit) => {
 });
 
 /** Hace un short y lo guarda; si falla, lo cuenta y sigue (en automático no se para todo por uno). */
-async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date.now().toString(36)) {
+async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date.now().toString(36), learn = '') {
   const v = voiceOf(voiceKey);
   emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
-  const p = await makeShort({ id, story, voiceId: v.id }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
+  const p = await makeShort({ id, story, voiceId: v.id, learn }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
   p.voice.title = v.title;
   await saveProject(p, user.id, TABLE);
   emit({ type: 'short', project: p });
@@ -82,13 +86,15 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
         const log = (text) => emit({ type: 'log', text });
         const avoid = (await listProjects(TABLE)).map((x) => `${x.story?.anime}: ${x.story?.angle}`);
         log('🔎 Buscando las historias de anime con más gancho…');
-        const { stories, cost: c0 } = await findStories({ count: Math.min(5, Math.max(1, Number(count) || 3)), avoid }, emit, track);
+        const learn = await learnFrom();
+        if (learn.includes('LO QUE NOS HA FUNCIONADO')) log('🧠 Aprendiendo de tus shorts que mejor funcionaron…');
+        const { stories, cost: c0 } = await findStories({ count: Math.min(5, Math.max(1, Number(count) || 3)), avoid, learn }, emit, track);
         log(`📰 ${stories.length} historias: ${stories.map((s) => s.anime).join(' · ')}`);
         let cost = c0, ok = 0;
         for (const [i, story] of stories.entries()) {
           if (signal.aborted) break;
           log(`━━ Short ${i + 1} de ${stories.length}: ${story.anime}`);
-          try { cost += (await makeAndSave(story, voice, user, emit, track, signal, `${Date.now().toString(36)}${i}`)).cost; ok++; }
+          try { cost += (await makeAndSave(story, voice, user, emit, track, signal, `${Date.now().toString(36)}${i}`, learn)).cost; ok++; }
           catch (e) { log(`⚠️ ${story.anime}: ${e.message.slice(0, 200)}`); }
         }
         return { made: ok, cost };
@@ -99,7 +105,7 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       const old = await getProject(safeId(m[1]), TABLE);
       if (!old) return sendJSON(res, 404, { error: 'No existe' });
       const { voice } = await readBody(req);
-      return task(res, (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id));
+      return task(res, async (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id, await learnFrom()));
     }
     // ---- cifras de las publicaciones (ahora mismo) ----
     if (p === '/api/stats' && req.method === 'POST') {
@@ -156,7 +162,11 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
     }
 
     // ---- shorts ----
-    if (p === '/api/projects' && req.method === 'GET') return sendJSON(res, 200, await listProjects(TABLE));
+    if (p === '/api/projects' && req.method === 'GET') {
+      const list = await listProjects(TABLE);
+      const v = virality(list);
+      return sendJSON(res, 200, list.map((x) => ({ ...x, viral: v[x.id] })));
+    }
     if ((m = p.match(/^\/api\/projects\/([\w-]+)$/)) && req.method === 'DELETE') {
       return (await deleteProject(safeId(m[1]), TABLE)) ? sendJSON(res, 200, { ok: true }) : sendJSON(res, 404, { error: 'No existe' });
     }

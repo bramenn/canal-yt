@@ -168,3 +168,10 @@ a.stat:hover { border-color: var(--line2); background: #121417; }
 .stat.off { color: var(--faint); }
 .stat.off .logo { opacity: .45; }
 .stats .hint { font-size: 11.5px; }
+
+/* ---------- viralidad ---------- */
+.viral { font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
+.viral.fire { color: #fff; background: linear-gradient(90deg, #ff4d1a, #ff9a1a); border-color: transparent; }
+.viral.up { color: #86efac; border-color: rgba(34, 197, 94, .4); }
+.viral.stuck { color: var(--faint); }
+.viral.normal { color: var(--dim); font-weight: 500; }

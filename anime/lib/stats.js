@@ -32,14 +32,14 @@ async function youtube() {
 /** Likes y comentarios de un short de YouTube (la lista solo trae vistas). */
 async function youtubeDetail(v) {
   const out = await ytdlp(['--extractor-args', 'youtube:lang=es;max_comments=1,1,0,0', '--skip-download', '--write-comments',
-    '--print', '%(view_count)s|%(like_count)s|%(comment_count)s', `https://www.youtube.com/watch?v=${v.id}`], 120000);
-  const [views, likes, comments] = out.trim().split('\n').pop().split('|').map((x) => (/^\d+$/.test(x) ? Number(x) : null));
-  return { ...v, views: views ?? v.views, likes, comments };
+    '--print', '%(view_count)s|%(like_count)s|%(comment_count)s|%(timestamp)s', `https://www.youtube.com/watch?v=${v.id}`], 120000);
+  const [views, likes, comments, ts] = out.trim().split('\n').pop().split('|').map((x) => (/^\d+$/.test(x) ? Number(x) : null));
+  return { ...v, views: views ?? v.views, likes, comments, published: ts ? ts * 1000 : null };
 }
 
 async function tiktok() {
   const list = await json(['--flat-playlist', '-I', '1:60', '-J', `tiktokuser:${ACCOUNTS.tiktok}`]);
-  return (list.entries ?? []).map((e) => ({ id: e.id, url: e.url ?? e.webpage_url, title: e.title ?? e.description ?? '', views: e.view_count ?? null, likes: e.like_count ?? null, comments: e.comment_count ?? null }));
+  return (list.entries ?? []).map((e) => ({ id: e.id, url: e.url ?? e.webpage_url, title: e.title ?? e.description ?? '', views: e.view_count ?? null, likes: e.like_count ?? null, comments: e.comment_count ?? null, published: e.timestamp ? e.timestamp * 1000 : null }));
 }
 
 const chromium = () => process.env.CHROMIUM_BIN || (() => {
@@ -67,7 +67,7 @@ async function facebook(log) {
   const out = [];
   for (const r of [...new Map(reels.map((x) => [x.url, x])).values()].slice(0, 30)) {
     if (!titles[r.url]) { try { titles[r.url] = (await json(['--skip-download', '-J', r.url], 90000)).title ?? ''; } catch { titles[r.url] = ''; } }
-    out.push({ id: r.url, url: r.url, title: titles[r.url], views: num(r.label), likes: null, comments: null });
+    out.push({ id: r.url, url: r.url, title: titles[r.url], views: num(r.label), likes: null, comments: null, published: null });
   }
   await setSetting('anime.fbTitles', titles);
   return out;
@@ -92,7 +92,7 @@ export async function refreshStats(shorts, save, log = () => {}) {
       for (const v of list) for (const t of ours) { const sc = score(v.title, t); if (sc >= bestScore) { best = v; bestScore = sc; } }
       if (!best) continue;
       if (name === 'youtube') best = await youtubeDetail(best).catch(() => best);
-      stats[name] = { url: best.url, views: best.views, likes: best.likes, comments: best.comments };
+      stats[name] = { url: best.url, views: best.views, likes: best.likes, comments: best.comments, published: best.published ?? p.stats?.[name]?.published ?? null };
     }
     if (!['youtube', 'tiktok', 'facebook'].some((k) => stats[k])) continue;
     found++;

@@ -25,12 +25,12 @@ async function produce({ id, script, voiceId, name, thumb }, { tts, aligner, med
 }
 
 /** Versión TikTok (65-75 s, > 1 min para poder monetizar); reutiliza los tráileres y la miniatura de la de YouTube. */
-export async function makeTiktok({ id, story, voiceId, thumb }, deps, emit, track, signal) {
+export async function makeTiktok({ id, story, voiceId, thumb, learn = '' }, deps, emit, track, signal) {
   const log = (text) => emit({ type: 'log', text });
   let cost = 0, more = '';
   for (let attempt = 1; ; attempt++) {
     log(`✍️ Guion largo para TikTok${attempt > 1 ? ' (más largo)' : ''}…`);
-    const { script, cost: c } = await writeScript(story, emit, track, { platform: 'tiktok', more });
+    const { script, cost: c } = await writeScript(story, emit, track, { platform: 'tiktok', more, learn });
     cost += c;
     const v = await produce({ id, script, voiceId, name: 'tiktok', thumb }, deps, log, signal);
     // TikTok solo paga vídeos de más de 1 minuto: si se queda corto, una vez más pidiendo más contenido
@@ -46,11 +46,11 @@ export async function makeTiktok({ id, story, voiceId, thumb }, deps, emit, trac
  * deps: { tts, aligner, mediaDir } (tts y aligner = lib/tts y lib/align ya cargados con PROJECTS_DIR).
  * Devuelve el proyecto { id, story, script, voice, video, tiktok, thumb, cost }.
  */
-export async function makeShort({ id, story, voiceId }, deps, emit, track, signal) {
+export async function makeShort({ id, story, voiceId, learn = '' }, deps, emit, track, signal) {
   const log = (text) => emit({ type: 'log', text });
   let cost = 0;
   log(`✍️ Guion: ${story.anime} — ${story.angle}`);
-  const { script, cost: c1 } = await writeScript(story, emit, track);
+  const { script, cost: c1 } = await writeScript(story, emit, track, { learn });
   cost += c1;
   log(`📝 «${script.title}» · ${script.lines.length} frases`);
   script.copy = await writeCopy({ about: copyAbout(story, script), brand: '@notianimes', keywordsHint: 'el nombre del anime o del personaje' }, emit, track);
@@ -58,7 +58,7 @@ export async function makeShort({ id, story, voiceId }, deps, emit, track, signa
   const yt = await produce({ id, script, voiceId, name: 'short' }, deps, log, signal);
   // versión TikTok (si falla, el short de YouTube se guarda igual)
   let tiktok = null;
-  try { const t = await makeTiktok({ id, story, voiceId, thumb: yt.thumb }, deps, emit, track, signal); tiktok = t.tiktok; cost += t.cost; }
+  try { const t = await makeTiktok({ id, story, voiceId, thumb: yt.thumb, learn }, deps, emit, track, signal); tiktok = t.tiktok; cost += t.cost; }
   catch (e) { log(`⚠️ Versión TikTok: ${e.message.slice(0, 160)}`); }
   return { id, story, script, voice: yt.voice, duration: Math.round(yt.duration), video: yt.video, tiktok, thumb: `/media/${id}/thumb-4k.jpg`, thumbSmall: `/media/${id}/thumb.jpg`, cost, created: Date.now() };
 }

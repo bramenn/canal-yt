@@ -155,6 +155,7 @@ function render() {
           <button data-act="remake" title="Guion, voz y montaje nuevos (con la voz elegida arriba)">🔄 Rehacer</button>
           <button data-act="del" class="danger" title="Borrar">🗑</button>
         </div>
+        ${p.viral?.level ? `<div class="viral ${p.viral.level}" title="Comparado con la mediana de tus shorts a la misma edad · ${p.viral.perHour ?? 0} vistas/h ahora">${esc(p.viral.label)}</div>` : ''}
         ${statsBox(p)}
         ${thumbBox(p.thumbSmall, p.thumb, p.script?.thumb_text, slug(p.script?.title ?? p.id), 'thumb')}
         ${p.story?.sources?.length ? `<details class="hint"><summary>Fuentes</summary>${p.story.sources.map((u) => `<div><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></div>`).join('')}</details>` : ''}

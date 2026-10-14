@@ -21,7 +21,7 @@ const STORIES_SCHEMA = {
   required: ['stories'],
 };
 
-export async function findStories({ count = 3, avoid = [] }, emit, track) {
+export async function findStories({ count = 3, avoid = [], learn = '' }, emit, track) {
   const today = new Date().toISOString().slice(0, 10);
   const ev = await claudeStep({
     prompt: `Hoy es ${today}. Busca en la web (noticias de anime de los últimos 7-10 días: Anime News Network, Crunchyroll News, X/Twitter de estudios, Reddit r/anime, ComicBook, CBR, medios japoneses) y elige las ${count} historias de anime con MÁS gancho para un short de TikTok/YouTube en español al estilo del canal AniDosis.
@@ -33,6 +33,8 @@ Lo que funciona en ese estilo (de sus shorts con más de 500.000 vistas): una cu
 - «Los fans de Dragon Ball están demasiado rotos»
 Valen: anuncios con un detalle insólito, récords raros, polémicas de fans, decisiones absurdas de estudios, escenas virales, datos curiosos de un anime nuevo de esta temporada.
 Evita: rumores sin fuente, noticias muy de nicho, spoilers enormes sin aviso${avoid.length ? `, y estas historias ya hechas: ${avoid.slice(0, 40).join(' · ')}` : ''}.
+
+${learn}
 
 Para cada una: "anime" (nombre del anime tal como se busca su tráiler en YouTube, en romaji o inglés), "angle" (el giro gracioso o sorprendente en una frase), "facts" (los datos concretos y verificados: nombres, cifras, fechas, qué pasó exactamente) y "sources" (URLs).`,
     schema: STORIES_SCHEMA, system: 'Eres guionista de un canal de shorts de anime en español. Verificas los datos antes de contarlos.',
@@ -69,9 +71,9 @@ const LENGTH = {
   tiktok: '65-75 segundos: 175-200 palabras, NUNCA menos de 170 (TikTok solo paga los vídeos de más de 1 minuto). Usa el tiempo extra para más contexto, un segundo dato curioso y un remate mejor; sin relleno y con el mismo ritmo',
 };
 
-export async function writeScript(story, emit, track, { platform = 'youtube', more = '' } = {}) {
+export async function writeScript(story, emit, track, { platform = 'youtube', more = '', learn = '' } = {}) {
   const ev = await claudeStep({
-    prompt: `Escribe el guion de un short vertical de anime (voz en off en español latino, ${LENGTH[platform]}) al estilo de AniDosis.${more ? `\n${more}` : ''}
+    prompt: `Escribe el guion de un short vertical de anime (voz en off en español latino, ${LENGTH[platform]}) al estilo de AniDosis.${more ? `\n${more}` : ''}${learn}
 
 Historia: ${story.anime} — ${story.angle}
 Datos (no inventes nada más): ${story.facts}
