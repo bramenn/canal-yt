@@ -97,7 +97,7 @@ http.createServer(async (req, res) => {
       const st = file.startsWith(MEDIA + path.sep) ? await stat(file).catch(() => null) : null;
       if (!st?.isFile()) return sendJSON(res, 404, { error: 'not found' });
       const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range ?? '');
-      const type = file.endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream';
+      const type = file.endsWith('.mp4') ? 'video/mp4' : /\.jpe?g$/.test(file) ? 'image/jpeg' : 'application/octet-stream';
       if (!range) { res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'Accept-Ranges': 'bytes' }); return createReadStream(file).pipe(res); }
       const a = range[1] ? +range[1] : 0, b = range[2] ? +range[2] : st.size - 1;
       res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${a}-${b}/${st.size}`, 'Content-Length': b - a + 1, 'Accept-Ranges': 'bytes' });

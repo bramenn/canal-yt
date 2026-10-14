@@ -47,6 +47,8 @@ const SCRIPT_SCHEMA = {
     title: { type: 'string' },
     description: { type: 'string' },
     hashtags: { type: 'array', items: { type: 'string' } },
+    thumb_text: { type: 'string' },
+    thumb_word: { type: 'string' },
     yellow: { type: 'array', items: { type: 'string' } },
     red: { type: 'array', items: { type: 'string' } },
     lines: {
@@ -58,7 +60,7 @@ const SCRIPT_SCHEMA = {
       },
     },
   },
-  required: ['title', 'description', 'hashtags', 'yellow', 'red', 'lines'],
+  required: ['title', 'description', 'hashtags', 'thumb_text', 'thumb_word', 'yellow', 'red', 'lines'],
 };
 
 export async function writeScript(story, emit, track) {
@@ -77,6 +79,7 @@ Frases cortas y naturales para leer en voz alta; los números escritos en palabr
 
 Devuelve:
 - "title": título al estilo AniDosis, palabras clave en MAYÚSCULAS, ≤ 70 caracteres, sin el nombre del canal (p. ej. «Este ANIME Se DESPIDIÓ De La MEJOR Manera POSIBLE!»).
+- "thumb_text": el texto de la miniatura (primer fotograma): 2-4 palabras en MAYÚSCULAS que despierten curiosidad o emoción sin contarlo todo y que NO repitan el título (juegan juntos: el título da contexto, la miniatura el gancho). Ej.: «NADIE LO SOPORTA», «¿CANCELADO?», «12 MINUTOS GRITANDO». "thumb_word": la palabra de "thumb_text" que va en amarillo.
 - "description": 1-2 frases para la descripción del short. "hashtags": 5-8 sin '#'.
 - "lines": el guion frase a frase (cada "text" de 4 a 18 palabras, en orden; juntas forman el guion completo). Para cada frase, qué se ve: "show" = "anime" (escenas del tráiler del anime; "query" = nombre del anime para buscar su tráiler/PV en YouTube, normalmente "${story.anime}") o "imagen" (una foto de algo real: un estudio, una persona, un cartel, un récord; "query" = búsqueda de imágenes concreta). Casi siempre "anime".
 - "yellow": 6-12 palabras sueltas del guion que se resaltan en amarillo (nombres, cifras, lo importante). "red": 2-5 palabras que se resaltan en rojo (lo impactante o negativo). Palabras exactas tal como aparecen en el guion.`,

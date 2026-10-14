@@ -1,31 +1,7 @@
-// Viñetas de cómic dibujadas con la herramienta de imágenes integrada de Codex (image_gen), que usa el plan de
-// ChatGPT de la sesión de Codex (sin API key). Codex guarda cada imagen en $CODEX_HOME/generated_images/…;
-// de ahí se recoge la nueva y se guarda en el proyecto.
-import { spawn } from 'node:child_process';
-import { mkdtemp, readdir, readFile, rm, stat, copyFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
-import path from 'node:path';
-import { CODEX_BIN, viaNode, codexEnv } from '../../lib/codex.js';
+// Viñetas de cómic dibujadas con Codex (image_gen, plan de ChatGPT; lib/codeximage.js).
+import { readFile } from 'node:fs/promises';
+import { generateImage } from '../../lib/codeximage.js';
 import { STYLE } from './podcast.js';
-
-const GEN_DIR = path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'generated_images');
-
-async function newestSince(dir, since) {
-  if (!existsSync(dir)) return null;
-  let best = null;
-  const walk = async (d) => {
-    for (const e of await readdir(d, { withFileTypes: true })) {
-      const f = path.join(d, e.name);
-      if (e.isDirectory()) { await walk(f); continue; }
-      if (!/\.(png|webp|jpe?g)$/i.test(e.name)) continue;
-      const st = await stat(f);
-      if (st.mtimeMs >= since && (!best || st.mtimeMs > best.t)) best = { f, t: st.mtimeMs };
-    }
-  };
-  await walk(dir);
-  return best?.f ?? null;
-}
 
 const panelPrompt = (p, character, setting, hasRef) => `Genera UNA imagen con tu herramienta integrada de generación de imágenes (image_gen). No uses scripts ni pidas OPENAI_API_KEY. No escribas código.
 
@@ -39,37 +15,8 @@ La violencia solo se sugiere (sombras, siluetas, reacciones); nada de sangre ni 
 ${hasRef ? 'La imagen adjunta es SOLO la referencia del personaje y del estilo: mantén IDÉNTICOS al protagonista (cara, pelo, ropa) y el estilo de dibujo y entintado, pero NO copies su fondo, encuadre ni composición: dibuja el lugar y el plano que pide esta escena.' : ''}
 Cuando la imagen esté generada, responde solo: listo.`;
 
-/** Dibuja una viñeta. Devuelve la ruta del archivo generado (en GEN_DIR). */
-export async function drawPanel({ panel, character, setting, ref }, signal) {
-  const work = await mkdtemp(path.join(tmpdir(), 'vineta-'));
-  try {
-    const args = ['exec', '--skip-git-repo-check', '--ephemeral', '--json', '-s', 'read-only', '-C', work];
-    if (ref) { const r = path.join(work, `referencia${path.extname(ref) || '.png'}`); await copyFile(ref, r); args.push('-i', r); }
-    args.push('-');
-    const since = Date.now() - 1000;
-    const env = await codexEnv();
-    let out = '', err = '';
-    const code = await new Promise((resolve, reject) => {
-      const child = spawn(...viaNode(CODEX_BIN, args), { cwd: work, env });
-      signal?.addEventListener('abort', () => child.kill('SIGTERM'));
-      child.stdin.end(panelPrompt(panel, character, setting, !!ref));
-      child.stdout.on('data', (c) => { out += c; });
-      child.stderr.on('data', (c) => { err += c; });
-      child.on('error', reject);
-      child.on('close', resolve);
-    });
-    // la ruta que Codex anuncia («Saved to: …») o, si no, la imagen más reciente de su carpeta
-    const said = out.match(/(\/[^"\s]+generated_images\/[^"\s]+\.(?:png|webp|jpe?g))/i)?.[1];
-    const file = (said && existsSync(said) ? said : null) ?? await newestSince(GEN_DIR, since);
-    if (!file) {
-      const why = [...out.matchAll(/"message":"([^"]{5,300})"/g)].map((m) => m[1]).pop() || err.trim().split('\n').pop() || `código ${code}`;
-      throw new Error(`Codex no generó la imagen: ${why}`);
-    }
-    return file;
-  } finally {
-    await rm(work, { recursive: true, force: true });
-  }
-}
+/** Dibuja una viñeta. Devuelve la ruta del archivo generado. */
+export const drawPanel = ({ panel, character, setting, ref }, signal) => generateImage({ prompt: panelPrompt(panel, character, setting, !!ref), ref }, signal);
 
 /**
  * Dibuja las viñetas `indices` de un short. La primera que salga sirve de referencia a las demás

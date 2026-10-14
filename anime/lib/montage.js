@@ -9,11 +9,14 @@ import { fileURLToPath } from 'node:url';
 import { run, ytdlp, search } from '../../lib/ytdlp.js';
 import { searchImages, UA } from '../../lib/brave.js';
 import { claudeStep } from '../../lib/claude.js';
+import { makeThumb } from './thumb.js';
 
 const FONTS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fonts');
 export const BRAND = '@notianimes';
 const W = 1080, H = 1920, FPS = 30;
 const CUT = 2.6;                           // duración objetivo de cada corte
+// vídeos de reacción/análisis: salen personas, webcams y anuncios encima del anime
+const REACTION = /react|reacci|reaccion|analysis|análisis|analisis|explained|review|resumen|theory|teoría/i;
 const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], timeout);
 const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ]/g, '');
 
@@ -30,7 +33,7 @@ async function trailer(query, dir, log) {
   let videos = 0, err = null, first = null;
   // YouTube corta a ratos (403): otro formato y, si no, el siguiente vídeo
   find: for (const q of tries) {
-    for (const cand of (await search(q, 8).catch(() => [])).filter((x) => x.duration >= 30 && x.duration <= 600 && !seen.has(x.id)).slice(0, 2)) {
+    for (const cand of (await search(q, 8).catch(() => [])).filter((x) => x.duration >= 30 && x.duration <= 600 && !seen.has(x.id) && !REACTION.test(x.title)).slice(0, 2)) {
       seen.add(cand.id);
       const file = path.join(dir, `tr-${slug}-${videos}.mp4`);
       for (const fmt of ['bv*[height<=1080][vcodec^=avc1]/bv*[height<=1080]', 'bv*[height<=1080]/b']) {
@@ -76,12 +79,14 @@ async function withoutText(file, scenes, dir, log) {
   }
   await ff(['-framerate', '1', '-i', `${tag}-%02d.jpg`, '-vf', `tile=8x${Math.ceil(pick.length / 8)}:padding=4:color=white`, '-frames:v', '1', `${tag}.jpg`]);
   const ev = await claudeStep({
-    prompt: `Lee la imagen ${path.basename(tag)}.jpg: es una rejilla numerada con un fotograma de cada escena de un tráiler de anime. Van a usarse como fondo de un short vertical con subtítulos propios. Devuelve en "bad" los números de las escenas que NO sirven: con cualquier texto superpuesto (títulos, créditos, fechas, logos, letreros del estudio, subtítulos quemados de cualquier tamaño), pantallas negras o casi vacías, o muy borrosas. Sirven las escenas de animación limpias (personajes, acción, paisajes).`,
-    schema: { type: 'object', properties: { bad: { type: 'array', items: { type: 'number' } } }, required: ['bad'] },
+    prompt: `Lee la imagen ${path.basename(tag)}.jpg: es una rejilla numerada con un fotograma de cada escena de un tráiler de anime. Van a usarse como fondo de un short vertical con subtítulos propios. Devuelve en "thumb" hasta 3 números de escenas que serían la mejor miniatura de YouTube (primer plano de un personaje con una emoción clara —sorpresa, miedo, rabia, risa—, mirando hacia la cámara si es posible, nítido y con buena luz), de mejor a peor. Y en "bad" los números de las escenas que NO sirven: con cualquier texto superpuesto (títulos, créditos, fechas, logos, letreros del estudio, subtítulos quemados de cualquier tamaño), personas reales, webcams, anuncios o marcos de otro canal, pantallas negras o casi vacías, o muy borrosas. Sirven las escenas de animación limpias (personajes, acción, paisajes).`,
+    schema: { type: 'object', properties: { thumb: { type: 'array', items: { type: 'number' } }, bad: { type: 'array', items: { type: 'number' } } }, required: ['thumb', 'bad'] },
     system: 'Eres editor de vídeo. Miras imágenes con la herramienta Read.', model: 'sonnet', effort: 'low', tools: ['Read'], cwd: dir,
   }, () => {}, () => {});
   const bad = new Set((ev.data.bad ?? []).map(Number));
   log(`👀 Escenas del tráiler: ${pick.length - bad.size} útiles de ${pick.length}`);
+  // las mejores para miniatura llevan su puesto (1 = la mejor)
+  (ev.data.thumb ?? []).forEach((n, r) => { if (pick[n - 1]) pick[n - 1].thumb = r + 1; });
   return pick.filter((_, i) => !bad.has(i + 1));
 }
 
@@ -212,9 +217,14 @@ export async function montage({ script, voice, words, duration, dir }, log, sign
   await writeFile(list, parts.map((p) => `file '${p}'`).join('\n'));
   const ass = path.join(dir, 'subs.ass');
   await writeFile(ass, subtitles(words, script, total));
+  // miniatura: del mejor primer plano del anime principal (o del primer corte si solo hubo imágenes)
+  const main = script.lines.find((l) => l.show === 'anime')?.query ?? script.lines[0].query;
+  const scenes = sources.get(main)?.scenes ?? [...sources.values()].find(Boolean)?.scenes ?? [{ file: parts[0], s: 0, e: 1 }];
+  const thumb = await makeThumb({ script, anime: main, scenes, dir }, log, signal);
   const final = path.join(dir, 'short.mp4');
-  await ff(['-f', 'concat', '-safe', '0', '-i', list, '-i', voice,
-    '-vf', `subtitles=${ass}:fontsdir=${FONTS}`, '-map', '0:v', '-map', '1:a',
+  // el primer fotograma es la miniatura (0,3 s: lo que se ve en búsquedas y en el perfil sin frenar el gancho)
+  await ff(['-f', 'concat', '-safe', '0', '-i', list, '-i', voice, '-loop', '1', '-t', String(total), '-i', thumb.small,
+    '-filter_complex', `[0:v]subtitles=${ass}:fontsdir=${FONTS}[v];[2:v]scale=${W}:${H}[t];[v][t]overlay=enable='lt(t,0.3)'[o]`, '-map', '[o]', '-map', '1:a',
     '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-t', String(total), '-movflags', '+faststart', final]);
-  return final;
+  return { video: final, thumb };
 }

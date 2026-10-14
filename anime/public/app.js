@@ -97,12 +97,14 @@ const tiktokText = (p) => `${p.script.title}\n\n${p.script.description}\n\n${(p.
 function render() {
   $('#shorts').innerHTML = list.length ? list.map((p) => `
     <div class="short" data-id="${p.id}">
-      <video src="${esc(p.video)}?v=${p.updated ?? ''}" controls preload="metadata" playsinline></video>
+      <video src="${esc(p.video)}?v=${p.updated ?? ''}" ${p.thumbSmall ? `poster="${esc(p.thumbSmall)}?v=${p.updated ?? ''}"` : ''} controls preload="metadata" playsinline></video>
       <div class="body">
         <div class="title">${esc(p.script?.title)}</div>
         <div class="hint">${esc(p.story?.anime)} · ${esc(p.story?.angle)}${p.voice?.title ? ` · 🎙 ${esc(p.voice.title)}` : ''}</div>
         <div class="row wrap">
           <a class="btn" href="${esc(p.video)}" download="${esc(slug(p.script?.title ?? p.id))}.mp4">⬇ MP4</a>
+          ${p.thumb ? `<a class="btn" href="${esc(p.thumb)}" download="${esc(slug(p.script?.title ?? p.id))}-miniatura-4k.jpg" title="2160×3840">⬇ Miniatura 4K</a>
+          <a class="btn" href="${esc(p.thumbSmall)}" download="${esc(slug(p.script?.title ?? p.id))}-miniatura.jpg" title="1080×1920, menos de 2 MB (para subir a YouTube)">⬇ Miniatura YouTube</a>` : ''}
           <button data-act="copy">📋 Título y texto</button>
           <button data-act="remake">🔄 Rehacer</button>
           <button data-act="del" class="danger">🗑</button>

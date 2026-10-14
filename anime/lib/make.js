@@ -26,5 +26,5 @@ export async function makeShort({ id, story, voiceId }, { tts, aligner, mediaDir
   log('🎬 Montando el vídeo (tráileres, cortes y subtítulos)…');
   const dir = path.join(mediaDir, id);
   await montage({ script, voice: file, words, duration: al.duration ?? words.at(-1).e, dir }, log, signal);
-  return { id, story, script, voice: { voiceId, url: seg.url }, video: `/media/${id}/short.mp4`, cost, created: Date.now() };
+  return { id, story, script, voice: { voiceId, url: seg.url }, video: `/media/${id}/short.mp4`, thumb: `/media/${id}/thumb-4k.jpg`, thumbSmall: `/media/${id}/thumb.jpg`, cost, created: Date.now() };
 }
