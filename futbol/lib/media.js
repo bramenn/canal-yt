@@ -20,19 +20,29 @@ export const BRAVE_ENV = 'BRAVE_API_KEY';
 export const braveStatus = () => ({ configured: !!readKey('brave', BRAVE_ENV), source: keySource('brave', BRAVE_ENV) });
 export const setBraveKey = (key) => saveKey('brave', key);
 
-// ponytail: una búsqueda por segundo para todo el servidor (límite del plan gratuito de Brave); subir el ritmo si se paga un plan mayor
+// ponytail: de una en una para todo el servidor (límite del plan gratuito de Brave: 1/s); subir el ritmo si se paga un plan mayor.
+// En fila también se reutiliza la misma conexión: desde el clúster, abrir conexiones nuevas a Brave a veces caduca.
 let braveTurn = Promise.resolve();
+async function braveOnce(key, q) {
+  const u = new URL('https://api.search.brave.com/res/v1/images/search');
+  u.searchParams.set('q', q); u.searchParams.set('count', '30'); u.searchParams.set('safesearch', 'strict');
+  for (let i = 1; ; i++) {
+    try {
+      const r = await fetch(u, { headers: { 'X-Subscription-Token': key, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+      if (!r.ok) throw Object.assign(new Error(`respondió ${r.status}`), { http: true });
+      return (await r.json()).results ?? [];
+    } catch (e) {
+      if (e.http || i === 3) throw new Error(e.http ? e.message : `sin conexión (${e.cause?.code ?? e.message})`);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
 async function brave(q) {
   const key = readKey('brave', BRAVE_ENV);
   if (!key) throw new Error('sin clave: ponla en ⚙ Ajustes (api.search.brave.com)');
-  const turn = braveTurn;
-  braveTurn = turn.then(() => new Promise((r) => setTimeout(r, 1100)));
-  await turn;
-  const u = new URL('https://api.search.brave.com/res/v1/images/search');
-  u.searchParams.set('q', q); u.searchParams.set('count', '30'); u.searchParams.set('safesearch', 'strict');
-  const r = await fetch(u, { headers: { 'X-Subscription-Token': key, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
-  if (!r.ok) throw new Error(`respondió ${r.status}`);
-  return ((await r.json()).results ?? []).map((x) => item({
+  const run = braveTurn.then(() => braveOnce(key, q));
+  braveTurn = run.catch(() => {}).then(() => new Promise((r) => setTimeout(r, 1100)));
+  return (await run).map((x) => item({
     image: x.properties?.url, thumbnail: x.thumbnail?.src, width: x.properties?.width, height: x.properties?.height, title: x.title, page: x.url,
   }));
 }
