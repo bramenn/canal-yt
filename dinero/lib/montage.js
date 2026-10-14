@@ -57,11 +57,14 @@ Cuando la imagen esté generada, responde solo: listo.` }, signal);
   } catch (e) { log(`⚠️ Sin fotos ni ilustración de «${query}» (${e.message.slice(0, 80)})`); return null; }
 }
 
-/** Clip de una imagen: desplazamiento lento (alterna dirección); blur = fondo de tarjeta (desenfocado y oscuro). */
+/** Clip de una imagen: acercamiento lento y sutil hacia el centro (Ken Burns, +6 %), sin desplazarse de lado
+ *  (los barridos laterales rápidos marean y tapan el texto); el ritmo lo dan los cortes. Se trabaja a doble resolución
+ *  para que el zoom no tiemble. blur = fondo de tarjeta (desenfocado y oscuro). */
 async function imageClip(img, dur, out, i, blur) {
-  const dx = i % 2 ? `(iw-ow)*t/${dur}` : `(iw-ow)*(1-t/${dur})`;
+  const frames = Math.max(1, Math.round(dur * FPS));
   const look = blur ? ',boxblur=22:2,eq=brightness=-0.22:saturation=0.85' : '';
-  await ff(['-loop', '1', '-t', String(dur), '-i', img, '-vf', `scale=${Math.round(W * 1.15)}:${Math.round(H * 1.15)}:force_original_aspect_ratio=increase,crop=${W}:${H}:x='${dx}':y='(ih-oh)/2'${look},fps=${FPS},format=yuv420p`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
+  await ff(['-i', img, '-vf', `scale=${W * 2}:${H * 2}:force_original_aspect_ratio=increase,crop=${W * 2}:${H * 2},zoompan=z='1+0.06*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=${FPS}${look},format=yuv420p`,
+    '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
 }
 
 const thumbPrompt = (about) => `Genera UNA imagen con tu herramienta integrada de generación de imágenes (image_gen). No uses scripts ni pidas OPENAI_API_KEY. No escribas código.

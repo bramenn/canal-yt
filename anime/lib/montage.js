@@ -135,9 +135,9 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
     const img = pool.length ? pool[k % pool.length] : null;
     if (c.show === 'imagen' || !sources.get(q)) used.set(c.show === 'imagen' ? c.query : q, k + 1);
     if (img) {
-      // la imagen se desplaza despacio (alterna dirección)
-      const dx = i % 2 ? '(iw-ow)*t/' + dur : '(iw-ow)*(1-t/' + dur + ')';
-      await ff(['-loop', '1', '-t', String(dur), '-i', img, '-vf', `scale=${Math.round(W * 1.15)}:${Math.round(H * 1.15)}:force_original_aspect_ratio=increase,crop=${W}:${H}:x='${dx}':y='(ih-oh)/2',fps=${FPS},format=yuv420p`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
+      // acercamiento lento y sutil hacia el centro (+6 %), sin barridos laterales; a doble resolución para que no tiemble
+      const frames = Math.max(1, Math.round(dur * FPS));
+      await ff(['-i', img, '-vf', `scale=${W * 2}:${H * 2}:force_original_aspect_ratio=increase,crop=${W * 2}:${H * 2},zoompan=z='1+0.06*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=${FPS},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
     } else {
       if (!sources.has(q)) sources.set(q, await trailer(q, dir, log));
       const t = sources.get(q);
