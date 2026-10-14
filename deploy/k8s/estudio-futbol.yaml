@@ -99,6 +99,7 @@ spec:
             - { name: SECURE_COOKIES, value: '1' }              # se entra por https (Cloudflare)
             - { name: CLIENT_IP_HEADER, value: cf-connecting-ip } # IP real del visitante para el bloqueo de intentos
             - { name: CODEX_DEVICE_AUTH, value: '1' }            # ChatGPT: login con código (no hay navegador en el servidor)
+            - { name: CODEX_IPV4, value: '1' }                   # el clúster no tiene salida IPv6: Codex sale por un puente IPv4
           readinessProbe:
             httpGet: { path: /login, port: 4322 }
             periodSeconds: 10

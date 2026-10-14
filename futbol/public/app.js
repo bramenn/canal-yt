@@ -954,10 +954,13 @@ $('#open-settings').onclick = () => { refreshStatus(); renderUsers(); $('#settin
 $('#codex-login').onclick = async () => {
   if (status.creds?.openai?.configured && !(await ask({ title: 'Usar tu cuenta de ChatGPT', text: 'Se quitará la API key de OpenAI guardada, porque si está puesta Codex la usa en lugar de tu suscripción.', ok: 'Seguir' }))) return;
   $('#settings').close();
-  runTask('Iniciar sesión con ChatGPT', async (ui) => {
+  // la pestaña se abre YA (en el mismo clic); si se abriera al llegar el enlace, el navegador la bloquearía
+  const tab = window.open('', '_blank');
+  tab?.document.write('<title>OpenAI</title><body style="font:18px system-ui;background:#0e1012;color:#eee;display:grid;place-items:center;height:90vh">Conectando con OpenAI…</body>');
+  const ok = await runTask('Iniciar sesión con ChatGPT', async (ui) => {
     await streamTo(ui, '/api/codex/login', {}, (e) => {
       if (!e.url) return;
-      window.open(e.url, '_blank');
+      if (tab && !tab.closed) tab.location.href = e.url; else window.open(e.url, '_blank');
       $('#task-now').innerHTML = e.code
         ? `1. <a href="${esc(e.url)}" target="_blank" rel="noopener">Abre la página de OpenAI</a> y entra con tu cuenta de ChatGPT.<br>2. Escribe este código: <b class="big-code">${esc(e.code)}</b>`
         : `Entra con tu cuenta de ChatGPT en la página de OpenAI y autoriza a Codex. <a href="${esc(e.url)}" target="_blank" rel="noopener">Abrir la página</a>`;
@@ -965,6 +968,7 @@ $('#codex-login').onclick = async () => {
     await refreshStatus();
     return 'Codex ya usa tu cuenta de ChatGPT. En ⚙ Ajustes puedes elegir «Solo Codex» o dejarlo en Automático.';
   });
+  try { if (!ok && tab && !tab.closed && tab.location.href === 'about:blank') tab.close(); } catch {} // ya en OpenAI: se deja
 };
 $('#clear-openai').onclick = async () => {
   try { await postJSON('/api/credentials/clear', { id: 'openai' }); await refreshStatus(); toast('API key de OpenAI quitada', 'ok'); }
