@@ -12,7 +12,7 @@ import { migrate, listProjects, getProject, saveProject, deleteProject, getSetti
 import { countUsers } from '../lib/auth.js';
 import { gate, serveFrom } from '../lib/web.js';
 import { fileStore } from '../lib/store.js';
-import { ingest } from './lib/podcast.js';
+import { ingest, fxShort } from './lib/podcast.js';
 import { drawShort } from './lib/comicart.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -64,6 +64,11 @@ http.createServer(async (req, res) => {
     if (p === '/api/podcast' && req.method === 'POST') {
       const body = await readBody(req);
       return task(res, (emit, track, signal) => ingest({ url: body.url, projectId: safeId(body.projectId) }, media, emit, track, signal));
+    }
+    // ---- efectos de un short (clímax y ambientes), también para shorts ya dibujados ----
+    if (p === '/api/podcast/fx' && req.method === 'POST') {
+      const { short } = await readBody(req);
+      return task(res, async (emit, track) => { const cost = await fxShort(short, emit, track); return { fx: short.fx, cost }; });
     }
     // ---- viñetas de un short con Codex (image_gen, plan de ChatGPT) ----
     if (p === '/api/podcast/draw' && req.method === 'POST') {

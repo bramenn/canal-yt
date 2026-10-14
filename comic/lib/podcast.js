@@ -117,6 +117,37 @@ ${short.cast?.length ? `Otras personas (siempre así): ${short.cast.map((c) => `
 Fragmento (segundos desde el inicio del short):
 ${lines}`;
 
+// ---------- efectos: clímax y ambiente de cada viñeta (sin tocar las viñetas: vale para shorts ya dibujados) ----------
+export const AMBIENTS = ['ninguno', 'lluvia', 'viento', 'calle', 'sirena', 'latido', 'interior', 'multitud'];
+const FX_SCHEMA = {
+  type: 'object',
+  properties: { beat: { type: 'number' }, sfx: { type: 'array', items: { type: 'string', enum: AMBIENTS } } },
+  required: ['beat', 'sfx'],
+};
+
+/** short.fx = { beat: segundo del clímax, sfx: ambiente de cada viñeta }. Devuelve el coste. */
+export async function fxShort(short, emit, track) {
+  const len = short.end - short.start;
+  const said = (a, b) => (short.words ?? []).filter((w) => w[1] >= a && w[1] < b).map((w) => w[0]).join(' ');
+  const panels = short.panels.map((p, i) => {
+    const end = short.panels[i + 1]?.t ?? len;
+    return `${i + 1}. [${p.t.toFixed(1)}-${end.toFixed(1)} s] se ve: ${p.desc} · se oye: "${said(p.t, end)}"`;
+  }).join('\n');
+  const ev = await claudeStep({
+    prompt: `Short vertical de TikTok en cómic con la voz original de un relato real («${short.title}», ${Math.round(len)} s). Diseña el sonido y el golpe de efecto.
+
+- "beat": el segundo EXACTO (desde el inicio del short) del momento más fuerte del relato: la revelación, el golpe, la frase que deja helado. Usa el tiempo de la palabra clave. Entre 25% y 90% de la duración; nunca en los primeros 3 s.
+- "sfx": un ambiente por viñeta (${short.panels.length}, en orden), el que suena en esa escena: ${AMBIENTS.join(', ')}. "latido" para los momentos de miedo o tensión interior; "sirena" si hay policía o ambulancia; "ninguno" si la escena es un recuerdo o reflexión sin lugar concreto. Que no cambie a cada viñeta: mantén el ambiente mientras la escena siga en el mismo sitio.
+
+Viñetas:
+${panels}`,
+    schema: FX_SCHEMA, system: 'Eres diseñador de sonido y editor de vídeos cortos.', model: 'sonnet', effort: 'low', tools: [],
+  }, emit, track);
+  const sfx = short.panels.map((_, i) => (AMBIENTS.includes(ev.data.sfx?.[i]) ? ev.data.sfx[i] : 'ninguno'));
+  short.fx = { beat: Math.min(len * 0.92, Math.max(3, Number(ev.data.beat) || len * 0.6)), sfx };
+  return ev.cost ?? 0;
+}
+
 /** Palabras de [start, end] con tiempos relativos al inicio del short. */
 function wordsIn(transcript, start, end) {
   return transcript.flatMap((s) => s.w).filter(([, s]) => s >= start - 0.05 && s < end).map(([w, s, e]) => [w, +(s - start).toFixed(2), +(e - start).toFixed(2)]);
@@ -189,7 +220,8 @@ export async function ingest(body, store, emit, track, signal) {
     if (signal?.aborted) break;
     log(`🖋 Guion del cómic ${n + 1}/${shorts.length}: «${sh.title}»…`);
     cost += await scriptShort(sh, meta, transcript, dir, mediaUrl, n, (e) => { if (!(e.type === 'log' && /^(⚙️|✍️)/.test(e.text))) emit(e); }, track);
-    log(`   ${sh.panels.length} viñetas`);
+    cost += await fxShort(sh, (e) => { if (!(e.type === 'log' && /^(⚙️|✍️)/.test(e.text))) emit(e); }, track);
+    log(`   ${sh.panels.length} viñetas · clímax a los ${sh.fx.beat.toFixed(1)} s`);
   }
   delete meta.audioFile;
   return { source: { ...meta, audio: `${mediaUrl}/${path.basename((await readdir(dir)).find((f) => f.startsWith('episode.')))}` }, shorts, cost };
