@@ -15,6 +15,7 @@ export function loadPanel(url) {
 }
 const ready = new Map();
 export async function preloadShort(short) {
+  await document.fonts.load('80px Anton').catch(() => {}); // si no, el primer dibujo sale con otra letra
   for (const p of short.panels ?? []) if (p.image?.url) ready.set(p.image.url, await loadPanel(p.image.url));
 }
 
@@ -116,22 +117,28 @@ function drawHook(ctx, hook, t) {
   const p = Math.min(easeOut(clamp(t / 0.3)), clamp((HOOK_SECS - t) / 0.3));
   ctx.save();
   ctx.globalAlpha = p;
-  ctx.font = '74px Anton, Impact, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const lines = [];
-  let cur = '';
-  for (const w of String(hook).toUpperCase().split(/\s+/)) {
-    const test = cur ? `${cur} ${w}` : w;
-    if (ctx.measureText(test).width > CW - 160 && cur) { lines.push(cur); cur = w; } else cur = test;
+  // el gancho cabe en 2 líneas como mucho: si no, letra más pequeña
+  let size = 74, lines = [];
+  for (; size >= 46; size -= 4) {
+    ctx.font = `${size}px Anton, Impact, sans-serif`;
+    lines = [];
+    let cur = '';
+    for (const w of String(hook).toUpperCase().split(/\s+/)) {
+      const test = cur ? `${cur} ${w}` : w;
+      if (ctx.measureText(test).width > CW - 160 && cur) { lines.push(cur); cur = w; } else cur = test;
+    }
+    if (cur) lines.push(cur);
+    if (lines.length <= 2) break;
   }
-  if (cur) lines.push(cur);
-  const h = lines.length * 86 + 40;
+  const lh = size * 1.16;
+  const h = lines.length * lh + 40;
   const y = 125 - h / 2 + 10;
   ctx.fillStyle = INK; ctx.fillRect(M, y, CW - 2 * M, h);
   ctx.fillStyle = ACCENT; ctx.fillRect(M, y + h - 12, CW - 2 * M, 12);
   ctx.fillStyle = '#fff';
-  lines.forEach((l, i) => ctx.fillText(l, CW / 2, y + 20 + 43 + i * 86));
+  lines.forEach((l, i) => ctx.fillText(l, CW / 2, y + 20 + lh / 2 + i * lh));
   ctx.restore();
 }
 

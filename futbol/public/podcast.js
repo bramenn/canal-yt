@@ -31,7 +31,7 @@ function render() {
         <p class="hint">${esc(s.why ?? '')}</p>
         <label>Gancho (texto en pantalla al empezar)<input data-f="hook" value="${esc(s.hook)}" /></label>
         <div class="pod-panels">${(s.panels ?? []).map((pn, i) => `
-          <button class="pod-panel ${pn.image ? '' : 'empty'}" data-panel="${i}" title="${esc(`${fmt(pn.t)} · ${pn.shot}: ${pn.desc}`)}" style="${pn.image ? `background-image:url('${esc(pn.image.url)}')` : ''}">
+          <button class="pod-panel ${pn.image ? '' : 'pending'}" data-panel="${i}" title="${esc(`${fmt(pn.t)} · ${pn.shot}: ${pn.desc}`)}" style="${pn.image ? `background-image:url('${esc(pn.image.url)}')` : ''}">
             <span>${i + 1}</span>${pn.image ? '' : '<i>sin dibujar</i>'}
           </button>`).join('')}</div>
         <div class="row wrap">
@@ -41,7 +41,7 @@ function render() {
         </div>
       </div>
     </div>`).join('');
-  project.shorts.forEach((s, n) => paint(n, 0));
+  project.shorts.forEach((s, n) => paint(n, 0.6)); // a 0,6 s ya se ve el gancho
   ctx.$('#pod-shorts').onclick = onClick;
   ctx.$('#pod-shorts').oninput = onInput;
 }
@@ -76,7 +76,7 @@ function play(n) {
     drawComic(c2, s, audio.currentTime, { credit: project.source?.channel });
     if (playing?.n === n) playing.raf = requestAnimationFrame(loop);
   };
-  audio.onended = () => { stop(); paint(n, 0); };
+  audio.onended = () => { stop(); paint(n, 0.6); };
   preloadShort(s).then(() => audio.play()).then(loop).catch((e) => { ctx.toast(`No se pudo reproducir: ${e.message}`, 'bad'); stop(); });
 }
 

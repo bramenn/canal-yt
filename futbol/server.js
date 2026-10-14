@@ -15,6 +15,7 @@ import { autoClips } from './lib/autoclips.js';
 import { makeThumbs } from './lib/thumbs.js';
 import { pickPhotos } from './lib/photopick.js';
 import { ingest as podcastIngest } from './lib/podcast.js';
+import { drawShort } from './lib/comicart.js';
 import { exportCapcut, capcutStatus } from './lib/capcut.js';
 import { applyCreds, credsStatus, saveCreds, clearCred } from './lib/creds.js';
 import { migrate, listProjects as dbProjects, getProject, saveProject, deleteProject, getSetting, setSetting } from './lib/db.js';
@@ -250,6 +251,18 @@ http.createServer(async (req, res) => {
           .catch((e) => emit({ type: 'error', message: e.message }))
           .finally(() => emit({ type: 'end' }));
         return () => { ctrl.abort(); cancel(); };
+      });
+    }
+    // dibujar viñetas de un short con Codex (image_gen, plan de ChatGPT)
+    if (p === '/api/podcast/draw' && req.method === 'POST') {
+      const body = await readBody(req);
+      return sse(res, (emit) => {
+        const ctrl = new AbortController();
+        drawShort({ ...body, projectId: safeId(body.projectId) }, media, emit, ctrl.signal)
+          .then((data) => emit({ type: 'result', data }))
+          .catch((e) => emit({ type: 'error', message: e.message }))
+          .finally(() => emit({ type: 'end' }));
+        return () => ctrl.abort();
       });
     }
     // foto de cada plano elegida mirando los candidatos (encaje con la voz + limpia)

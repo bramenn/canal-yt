@@ -55,6 +55,8 @@ function transcribe(audio, out, emit, signal) {
 const MOMENTS_SCHEMA = {
   type: 'object',
   properties: {
+    narrator: { type: 'string' },
+    cast: { type: 'array', items: { type: 'object', properties: { who: { type: 'string' }, look: { type: 'string' } }, required: ['who', 'look'] } },
     shorts: {
       type: 'array',
       items: {
@@ -67,7 +69,7 @@ const MOMENTS_SCHEMA = {
       },
     },
   },
-  required: ['shorts'],
+  required: ['narrator', 'cast', 'shorts'],
 };
 
 const momentsPrompt = (meta, lines) => `Este es un episodio del podcast «${meta.channel}»: «${meta.title}». Es una entrevista en la que alguien cuenta su historia (a veces un delito que cometió o sufrió).
@@ -78,7 +80,12 @@ Un buen fragmento:
 - Empieza fuerte (una frase que engancha en los primeros 2 segundos) y termina con un remate, un giro o una frase que deja con ganas.
 - Es un relato concreto, con acciones que se puedan dibujar, contado por el entrevistado en primera persona (evita tramos donde solo habla el entrevistador).
 - Es coherente: no corta una idea a la mitad. "start" es el inicio de una frase y "end" el final de otra (usa los tiempos de las líneas).
+- Empieza donde arranca la escena o la confesión, nunca con un conector suelto ("porque", "y", "entonces", "pero") ni a mitad de una reflexión.
 - No se solapan entre sí. Evita fragmentos que den el nombre completo de víctimas o menores.
+
+Además, para que el cómic sea coherente en TODOS los shorts del episodio:
+- "narrator": cómo se dibuja a quien cuenta la historia (edad aparente, complexión, pelo, barba, ropa característica, un rasgo reconocible). Coherente con lo que cuenta de sí mismo, inventado y genérico: NUNCA el parecido de una persona real.
+- "cast": las demás personas que aparecen en varios fragmentos (pareja, hijos, policía…), con "who" (cómo se le nombra) y "look" (cómo se dibuja). Sin nombres reales completos.
 
 Para cada uno: "title" (corto, para identificarlo), "hook" (texto en pantalla los primeros segundos, máx. 8 palabras, que intrigue sin destripar), "why" (por qué engancha), "caption" (descripción para TikTok, 1-2 frases) y "hashtags" (4-6, sin #).
 
@@ -89,23 +96,23 @@ ${lines}`;
 const PANELS_SCHEMA = {
   type: 'object',
   properties: {
-    character: { type: 'string' },
     setting: { type: 'string' },
     panels: {
       type: 'array',
       items: { type: 'object', properties: { t: { type: 'number' }, shot: { type: 'string' }, desc: { type: 'string' } }, required: ['t', 'shot', 'desc'] },
     },
   },
-  required: ['character', 'setting', 'panels'],
+  required: ['setting', 'panels'],
 };
 
 const panelsPrompt = (meta, short, lines) => `Vas a guionizar un cómic vertical que acompaña, viñeta a viñeta, este fragmento de un podcast («${meta.channel}»). Se oye la voz original; las viñetas tienen que ilustrar EXACTAMENTE lo que se cuenta en cada momento, como un storyboard fiel.
 
 Estilo de dibujo: ${STYLE}.
 
-- "character": cómo se ve el protagonista (quien narra) en TODAS las viñetas: edad aparente, complexión, pelo, ropa característica, un rasgo reconocible. Inventado y genérico: NUNCA el parecido de una persona real.
+Protagonista (quien narra; dibújalo SIEMPRE así): ${short.narrator}
+${short.cast?.length ? `Otras personas (siempre así): ${short.cast.map((c) => `${c.who}: ${c.look}`).join(' · ')}` : ''}
 - "setting": época y lugar donde pasa la historia (ciudad, barrio, tipo de sitio), para que el fondo sea coherente.
-- "panels": una viñeta cada 3-5 segundos (para ${Math.round(short.end - short.start)} s, unas ${Math.round((short.end - short.start) / 4)}). "t" = segundo en que aparece (usa los tiempos de las líneas; la primera en 0). "shot": plano general, plano medio, primer plano, detalle o picado/contrapicado (varíalos como en un cómic). "desc": qué se ve, concreto y dibujable (quién, dónde, qué hace, gesto, luz); si sale el protagonista, nómbralo como "el protagonista".
+- "panels": una viñeta cada 4-6 segundos (para ${Math.round(short.end - short.start)} s, unas ${Math.round((short.end - short.start) / 5)}), cada una en un momento clave de lo que se cuenta. "t" = segundo en que aparece (usa los tiempos de las líneas; la primera en 0). "shot": plano general, plano medio, primer plano, detalle o picado/contrapicado (varíalos como en un cómic). "desc": qué se ve, concreto y dibujable (quién, dónde, qué hace, gesto, luz); si sale el protagonista, nómbralo como "el protagonista".
 - Sin texto, letreros ni bocadillos en las viñetas. La violencia se SUGIERE (sombras, siluetas, reacciones, objetos), nunca sangre ni heridas explícitas.
 
 Fragmento (segundos desde el inicio del short):
@@ -136,7 +143,8 @@ export async function scriptShort(short, meta, transcript, mediaDir, mediaUrl, n
   const lines = transcript.filter((s) => s.e > short.start && s.s < short.end).map((s) => `[${Math.max(0, s.s - short.start).toFixed(1)}] ${s.t}`).join('\n');
   const ev = await claudeStep({ prompt: panelsPrompt(meta, short, lines), schema: PANELS_SCHEMA, system: 'Eres guionista y storyboarder de cómic.', model: 'sonnet', effort: 'medium', tools: [], cwd: mediaDir }, emit, track);
   const len = short.end - short.start;
-  short.character = ev.data.character;
+  // el reparto es del episodio: el mismo protagonista en todos los shorts
+  short.character = [short.narrator, ...(short.cast ?? []).map((c) => `${c.who}: ${c.look}`)].filter(Boolean).join(' · ');
   short.setting = ev.data.setting;
   short.panels = ev.data.panels.filter((p) => p.t < len - 1).sort((a, b) => a.t - b.t).map((p, i) => ({ ...p, t: i ? +p.t : 0 }));
   short.words = wordsIn(transcript, short.start, short.end);
@@ -172,7 +180,9 @@ export async function ingest(body, store, emit, track, signal) {
   let cost = 0;
   const ev = await claudeStep({ prompt: momentsPrompt(meta, lines), schema: MOMENTS_SCHEMA, system: 'Eres editor de vídeos cortos virales (TikTok, Reels, Shorts) especializado en true crime.', model: 'sonnet', effort: 'medium', tools: [], cwd: dir }, emit, track);
   cost += ev.cost ?? 0;
-  const shorts = (ev.data.shorts ?? []).map((s) => { const [start, end] = snap(transcript, s.start, s.end); return { ...s, start, end }; })
+  const { narrator, cast = [] } = ev.data;
+  log(`🧑‍🎨 Protagonista: ${narrator.slice(0, 120)}…`);
+  const shorts = (ev.data.shorts ?? []).map((s) => { const [start, end] = snap(transcript, s.start, s.end); return { ...s, start, end, narrator, cast }; })
     .filter((s) => s.end - s.start >= 15 && s.end - s.start <= 95);
   log(`✂️ ${shorts.length} relatos: ${shorts.map((s) => `«${s.title}» (${Math.round(s.end - s.start)} s)`).join(' · ')}`);
 
