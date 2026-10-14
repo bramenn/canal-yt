@@ -156,15 +156,22 @@ function wordsIn(transcript, start, end) {
 /** Ajusta el inicio y el fin a los límites de frase más cercanos de la transcripción. */
 function snap(transcript, start, end) {
   const s = transcript.reduce((a, b) => (Math.abs(b.s - start) < Math.abs(a.s - start) ? b : a)).s;
-  const e = transcript.reduce((a, b) => (Math.abs(b.e - end) < Math.abs(a.e - end) ? b : a)).e;
+  let last = transcript.reduce((a, b) => (Math.abs(b.e - end) < Math.abs(a.e - end) ? b : a));
+  // Whisper a veces separa «claro está que» como si fuera un tramo completo: no cortes tras un conector.
+  while (/\b(?:a|al|ante|con|contra|de|del|desde|el|en|para|por|que|si|sin|sobre|y|o|pero|porque|cuando|donde)$/i.test(last.t.trim())) {
+    const i = transcript.indexOf(last);
+    if (i < 1) break;
+    last = transcript[i - 1];
+  }
+  const e = last.e;
   return [s, Math.max(e, s + 5)];
 }
 
 async function cutAudio(src, dir, n, start, end) {
   const file = `short-${n}-${Math.round(start * 10)}-${Math.round(end * 10)}.wav`;
   const out = path.join(dir, file);
-  // un poco de margen al final: la última palabra no se corta en seco
-  if (!existsSync(out)) await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-ss', String(start), '-to', String(end + 0.35), '-i', src, '-vn', '-ac', '1', '-ar', '44100', '-c:a', 'pcm_s16le', '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11', out]);
+  // una breve cola silenciosa deja respirar el último remate sin colar la frase siguiente
+  if (!existsSync(out)) await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-ss', String(start), '-to', String(end), '-i', src, '-vn', '-ac', '1', '-ar', '44100', '-c:a', 'pcm_s16le', '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11,apad=pad_dur=0.5', out]);
   return file;
 }
 
