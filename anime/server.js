@@ -58,7 +58,8 @@ async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date
   return p;
 }
 
-http.createServer(async (req, res) => {
+// sin límite de tiempo por petición: las tareas largas (vídeo completo, viñetas, miniaturas) van por SSE y pasan de 5 min
+http.createServer({ requestTimeout: 0 }, async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   let m;

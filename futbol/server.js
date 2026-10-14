@@ -58,7 +58,8 @@ async function listProjects() {
   return out.sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0));
 }
 
-http.createServer(async (req, res) => {
+// sin límite de tiempo por petición: las tareas largas (vídeo completo, viñetas, miniaturas) van por SSE y pasan de 5 min
+http.createServer({ requestTimeout: 0 }, async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   const sp = url.searchParams;

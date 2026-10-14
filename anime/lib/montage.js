@@ -78,7 +78,7 @@ async function withoutText(file, scenes, dir, log) {
   }
   await ff(['-framerate', '1', '-i', `${tag}-%02d.jpg`, '-vf', `tile=8x${Math.ceil(pick.length / 8)}:padding=4:color=white`, '-frames:v', '1', `${tag}.jpg`]);
   const ev = await claudeStep({
-    prompt: `Lee la imagen ${path.basename(tag)}.jpg: es una rejilla numerada con un fotograma de cada escena de un tráiler de anime. Van a usarse como fondo de un short vertical con subtítulos propios. Devuelve en "thumb" hasta 3 números de escenas que serían la mejor miniatura de YouTube (primer plano de un personaje con una emoción clara —sorpresa, miedo, rabia, risa—, mirando hacia la cámara si es posible, nítido y con buena luz), de mejor a peor. Y en "bad" los números de las escenas que NO sirven: con cualquier texto superpuesto (títulos, créditos, fechas, logos, letreros del estudio, subtítulos quemados de cualquier tamaño), personas reales, webcams, anuncios o marcos de otro canal, pantallas negras o casi vacías, o muy borrosas. Sirven las escenas de animación limpias (personajes, acción, paisajes).`,
+    prompt: `Lee la imagen ${path.basename(tag)}.jpg: es una rejilla numerada con un fotograma de cada escena de un tráiler de anime. Van a usarse como fondo de un short vertical con subtítulos propios. Devuelve en "thumb" hasta 3 números de escenas que serían la mejor miniatura de YouTube (primer plano de un personaje con una emoción clara —sorpresa, miedo, rabia, risa—, mirando hacia la cámara si es posible, nítido y con buena luz), de mejor a peor. Y en "bad" los números de las escenas que NO sirven: con texto grande o en el centro (títulos, créditos, fechas, logos, letreros del estudio, carteles), personas reales, webcams, anuncios o marcos de otro canal, pantallas negras o casi vacías, o muy borrosas. Los subtítulos pequeños en la franja de ABAJO no importan (esa franja se recorta): esas escenas sí sirven si la animación es buena.`,
     schema: { type: 'object', properties: { thumb: { type: 'array', items: { type: 'number' } }, bad: { type: 'array', items: { type: 'number' } } }, required: ['thumb', 'bad'] },
     system: 'Eres editor de vídeo. Miras imágenes con la herramienta Read.', model: 'sonnet', effort: 'low', tools: ['Read'], cwd: dir,
   }, () => {}, () => {});
@@ -207,7 +207,7 @@ export async function montage({ script, voice, words, duration, dir }, log, sign
       const start = sc.s + Math.max(0, (sc.e - sc.s - dur) / 2);
       // si la escena es más corta que el corte, se ralentiza un poco para cubrirlo
       const slow = Math.max(1, dur / Math.max(0.5, sc.e - sc.s));
-      await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', sc.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*PTS,scale=${Math.round(W * 1.12)}:${Math.round(H * 1.12)}:force_original_aspect_ratio=increase,crop=${W}:${H}:(iw-ow)/2:(ih-oh)*0.3,fps=${FPS},format=yuv420p`, '-t', String(dur), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
+      await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', sc.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*PTS,scale=${Math.round(W * 1.25)}:${Math.round(H * 1.25)}:force_original_aspect_ratio=increase,crop=${W}:${H}:(iw-ow)/2:(ih-oh)*0.2,fps=${FPS},format=yuv420p`, '-t', String(dur), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
     }
     parts.push(out);
   }
