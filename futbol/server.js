@@ -14,6 +14,7 @@ import { checkImages } from './lib/watermark.js';
 import { autoClips } from './lib/autoclips.js';
 import { makeThumbs } from './lib/thumbs.js';
 import { pickPhotos } from './lib/photopick.js';
+import { ingest as podcastIngest } from './lib/podcast.js';
 import { exportCapcut, capcutStatus } from './lib/capcut.js';
 import { applyCreds, credsStatus, saveCreds, clearCred } from './lib/creds.js';
 import { migrate, listProjects as dbProjects, getProject, saveProject, deleteProject, getSetting, setSetting } from './lib/db.js';
@@ -49,6 +50,11 @@ async function listProjects() {
   const out = [];
   for (const p of await dbProjects()) {
     try {
+      if (p.type === 'podcast') {
+        const panels = (p.shorts ?? []).flatMap((s) => s.panels ?? []);
+        out.push({ id: p.id, type: 'podcast', title: p.source?.title ?? 'Podcast', updated: p.updated, cover: panels.find((x) => x.image)?.image.url ?? null, shorts: p.shorts?.length ?? 0, shots: panels.length, withMedia: panels.filter((x) => x.image).length });
+        continue;
+      }
       const shots = (p.video?.segments ?? []).flatMap((s) => s.shots ?? []);
       // portada: la foto del jugador de la miniatura elegida o la primera foto del vídeo
       const cover = p.thumbs?.[p.thumbPick ?? 0]?.bg?.url ?? shots.find((s) => s.media && s.media.type !== 'video')?.media.url ?? null;
@@ -230,6 +236,20 @@ http.createServer(async (req, res) => {
           .catch((e) => emit({ type: 'error', message: e.message }))
           .finally(() => emit({ type: 'end' }));
         return () => cancel();
+      });
+    }
+    // podcast → shorts en cómic: audio, transcripción, mejores relatos y guion de cada cómic
+    if (p === '/api/podcast' && req.method === 'POST') {
+      const body = await readBody(req);
+      return sse(res, (emit) => {
+        const ctrl = new AbortController();
+        let cancel = () => {};
+        const started = Date.now();
+        podcastIngest({ url: body.url, projectId: safeId(body.projectId) }, media, emit, (c) => { cancel = c; }, ctrl.signal)
+          .then((data) => emit({ type: 'result', data, cost: data.cost, secs: Math.round((Date.now() - started) / 1000) }))
+          .catch((e) => emit({ type: 'error', message: e.message }))
+          .finally(() => emit({ type: 'end' }));
+        return () => { ctrl.abort(); cancel(); };
       });
     }
     // foto de cada plano elegida mirando los candidatos (encaje con la voz + limpia)

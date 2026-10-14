@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { readKey, keySource, saveKey } from '../../lib/tts/keys.js';
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
-const TYPES = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/avif': '.avif', 'video/mp4': '.mp4' };
+const TYPES = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/avif': '.avif', 'video/mp4': '.mp4', 'audio/wav': '.wav', 'audio/mp4': '.m4a' };
 const MAX = 25 * 1024 * 1024;
 const safe = (s) => String(s).replace(/[^a-z0-9_-]/gi, '').slice(0, 80) || 'proyecto';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -86,6 +86,8 @@ export function mediaStore(root) {
     },
 
     save,
+    /** Carpeta de un proyecto dentro del almacén (se crea al guardar). */
+    dirOf: dir,
     upload: (projectId, buf, type) => save(projectId, buf, type, null),
 
     /** /media/<proyecto>/<archivo> → ruta absoluta (solo dentro del almacén). */
