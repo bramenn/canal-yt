@@ -5,7 +5,6 @@ import { Mixer } from '/engine/audio.js';
 import { stream, getJSON, postJSON } from '/shared/api.js';
 import { exportVideo, canExportFast, downloadUrl } from '/shared/exporter.js';
 import { drawThumb, loadImg, fontReady, TW, TH } from './thumb.js';
-import { openPodcast, closePodcast } from './podcast.js';
 import { drawFrame, preload, W, H, setRedraw, setLive, seekFor, endExport, TRANSITIONS, transitionOf } from './render.js';
 
 // sesión caducada o cerrada en otro sitio: de vuelta al login
@@ -137,8 +136,6 @@ function showHome() {
   history.replaceState(null, '', location.pathname);
   $('#home').hidden = false;
   $('#editor').hidden = true;
-  $('#podcast-view').hidden = true;
-  closePodcast();
   $('#steps').hidden = true;
   $('#home-btn').hidden = true;
   renderProjects();
@@ -152,14 +149,11 @@ async function renderProjects() {
       <div class="cover" style="${p.cover ? `background-image:url('${esc(p.cover)}')` : ''}"></div>
       <div class="body">
         <div class="title">${esc(p.title)}</div>
-        <div class="meta">${p.type === 'podcast' ? `
-          <span class="pill">🎙 podcast</span>
-          <span class="pill">${p.shorts} shorts</span>
-          <span class="pill ${p.shots && p.withMedia === p.shots ? 'ok' : ''}">🖌 ${p.withMedia}/${p.shots} viñetas</span>` : `
+        <div class="meta">
           <span class="pill ${p.shots && p.withMedia === p.shots ? 'ok' : ''}">🖼 ${p.withMedia ?? 0}/${p.shots ?? 0}</span>
           <span class="pill ${p.voice ? 'ok' : ''}">🎙 ${p.voice ? 'voz' : 'sin voz'}</span>
           <span class="pill ${p.thumbs ? 'ok' : ''}">🖼 ${p.thumbs ? 'miniatura' : 'sin miniatura'}</span>
-          ${p.exported ? '<span class="pill ok">⬇ exportado</span>' : ''}`}
+          ${p.exported ? '<span class="pill ok">⬇ exportado</span>' : ''}
         </div>
         <div class="hint">${p.updated ? new Date(p.updated).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' }) : ''}</div>
       </div>
@@ -179,17 +173,6 @@ $('#project-list').onclick = async (e) => {
 };
 
 async function openProject(p, view) {
-  if (p.type === 'podcast') {
-    project = p;
-    player.pause();
-    $('#home').hidden = true; $('#editor').hidden = true; $('#steps').hidden = true;
-    $('#podcast-view').hidden = false; $('#home-btn').hidden = false;
-    history.replaceState(null, '', `#${p.id}`);
-    openPodcast(p, { $, esc, toast, ask, runTask, streamTo, save, slug });
-    return;
-  }
-  $('#podcast-view').hidden = true;
-  closePodcast();
   project = p;
   $('#home').hidden = true;
   $('#editor').hidden = false;
@@ -254,15 +237,12 @@ $('#mode-tabs').onclick = (e) => {
   const mode = b.dataset.mode;
   $('#new-form').dataset.mode = mode;
   $$('#mode-tabs button').forEach((x) => x.classList.toggle('on', x === b));
-  $('#lead').textContent = {
-    idea: 'Escribe la pregunta o la historia. El estudio investiga, escribe el guion, busca fotos y clips, pone la voz y prepara la miniatura.',
-    script: 'Pega tu guion. Se usa tal cual: el estudio solo le pone las imágenes, los clips, la voz y la miniatura.',
-    podcast: 'Pega un episodio de podcast de YouTube: salen shorts verticales para TikTok con la voz original y el relato dibujado como un cómic.',
-  }[mode];
+  $('#lead').textContent = mode === 'idea'
+    ? 'Escribe la pregunta o la historia. El estudio investiga, escribe el guion, busca fotos y clips, pone la voz y prepara la miniatura.'
+    : 'Pega tu guion. Se usa tal cual: el estudio solo le pone las imágenes, los clips, la voz y la miniatura.';
   $('#topic').required = mode === 'idea';
   $('#own-script').required = mode === 'script';
-  $('#podcast-url').required = mode === 'podcast';
-  ({ idea: $('#topic'), script: $('#own-script'), podcast: $('#podcast-url') })[mode].focus();
+  (mode === 'idea' ? $('#topic') : $('#own-script')).focus();
 };
 $('#own-script').addEventListener('input', (e) => {
   const words = e.target.value.split(/\s+/).filter(Boolean).length;
@@ -274,19 +254,6 @@ $('#topic').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shi
 $('#new-form').onsubmit = (e) => {
   e.preventDefault();
   const f = Object.fromEntries(new FormData(e.target));
-  if (e.target.dataset.mode === 'podcast') {
-    const id = Date.now().toString(36);
-    runTask('Preparando los shorts del podcast', async (ui) => {
-      ui.step('Descargar, transcribir, elegir los mejores relatos y guionizar cada cómic');
-      const ev = await streamTo(ui, '/api/podcast', { url: f.podcastUrl, projectId: id }, (x) => { if (x.type === 'progress') ui.progress(x.p); });
-      const p = { id, type: 'podcast', source: ev.data.source, shorts: ev.data.shorts };
-      p.updated = (await postJSON('/api/projects', p)).updated;
-      e.target.reset();
-      await openProject(p);
-      return `${p.shorts.length} shorts listos para dibujar: pulsa «Dibujar» en el que quieras`;
-    });
-    return;
-  }
   const auto = !!f.auto;
   const own = e.target.dataset.mode === 'script';
   runTask(auto ? 'Creando el vídeo completo' : own ? 'Preparando tu guion' : 'Escribiendo el guion', async (ui) => {

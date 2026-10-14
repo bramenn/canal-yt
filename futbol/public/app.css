@@ -68,8 +68,7 @@ main { padding: 24px 20px 80px; max-width: 1500px; margin: 0 auto; }
 .mode-tabs { display: inline-flex; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px; margin-bottom: 14px; }
 .mode-tabs button { border: none; background: transparent; color: var(--dim); font-weight: 600; padding: 8px 16px; border-radius: 9px; }
 .mode-tabs button.on { background: var(--panel2); color: var(--text); box-shadow: 0 0 0 1px var(--line2); }
-.new-form:not([data-mode=idea]) .only-idea:not(.only-script), .new-form:not([data-mode=script]) .only-script:not(.only-idea), .new-form:not([data-mode=podcast]) .only-podcast,
-.new-form[data-mode=podcast] .only-idea, .new-form[data-mode=podcast] .only-script { display: none; }
+.new-form[data-mode=idea] .only-script, .new-form[data-mode=script] .only-idea { display: none; }
 .script-box { display: grid; gap: 10px; }
 .script-box textarea { min-height: 240px; font-size: 15px; }
 .examples { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; color: var(--faint); }
@@ -193,23 +192,6 @@ canvas#canvas { display: block; width: 100%; aspect-ratio: 16 / 9; }
 .pub .field-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .pub pre { white-space: pre-wrap; margin: 0; font: 14px/1.5 Inter, system-ui, sans-serif; color: var(--text); max-height: 260px; overflow: auto; }
 
-/* ---------- podcast → shorts ---------- */
-.pod-head { margin-bottom: 18px; display: grid; gap: 6px; }
-.pod-head a { color: var(--accent); }
-.pod-shorts { display: grid; gap: 18px; }
-.pod-short { display: grid; grid-template-columns: 300px 1fr; gap: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; }
-.pod-preview { position: relative; border-radius: 10px; overflow: hidden; background: #000; align-self: start; }
-.pod-preview canvas { display: block; width: 100%; aspect-ratio: 9 / 16; }
-.pod-preview .big-play.hide { display: none; }
-.pod-info { display: grid; gap: 12px; align-content: start; min-width: 0; }
-.pod-info h3 { font-size: 18px; }
-.pod-panels { display: grid; grid-template-columns: repeat(auto-fill, minmax(74px, 1fr)); gap: 6px; }
-.pod-panel { position: relative; aspect-ratio: 2 / 3; padding: 0; border-radius: 6px; background: #000 center / cover no-repeat; border: 2px solid var(--line); overflow: hidden; }
-.pod-panel:hover { border-color: var(--accent); }
-.pod-panel.pending { background: repeating-linear-gradient(45deg, #1a1d21, #1a1d21 6px, #16191c 6px, #16191c 12px); }
-.pod-panel span { position: absolute; left: 4px; top: 3px; font-size: 11px; font-weight: 700; background: rgba(0,0,0,.7); color: #fff; padding: 0 5px; border-radius: 3px; }
-.pod-panel i { position: absolute; inset: auto 0 6px; font-size: 10px; color: var(--faint); font-style: normal; text-align: center; }
-
 /* ---------- ventanas ---------- */
 dialog.dlg { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; width: min(560px, 94vw); box-shadow: var(--shadow); }
 dialog.dlg.wide { width: min(1100px, 95vw); }
@@ -306,7 +288,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .65); backdrop-filter: blur(2px); }
   main { padding: 16px 16px 80px; }
   .hero h1 { font-size: 28px; }
   .form-row .primary { width: 100%; }
-  .thumb-card, .shot-edit, .clip-layout, .pod-short { grid-template-columns: 1fr; }
+  .thumb-card, .shot-edit, .clip-layout { grid-template-columns: 1fr; }
   .clip-layout { height: auto; }
   .brand b { display: none; }
   #home-btn { display: none; } /* el ⚽ ya lleva a tus vídeos */

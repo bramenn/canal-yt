@@ -8,7 +8,6 @@ import { mkdir, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claudeStep } from '../../lib/claude.js';
-import * as clips from './clips.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..', '..');
@@ -161,7 +160,7 @@ export async function ingest(body, store, emit, track, signal) {
   const id = videoIdOf(body.url);
   if (!id) throw new Error('No reconozco esa URL de YouTube');
   log('🔎 Leyendo el episodio…');
-  const info = await clips.rawInfo(id);
+  const info = JSON.parse(await run(YTDLP, ['--js-runtimes', 'node', '--no-warnings', '-J', '--skip-download', `https://www.youtube.com/watch?v=${id}`], 60000));
   const meta = { id, url: `https://www.youtube.com/watch?v=${id}`, title: info.title, channel: info.channel ?? info.uploader ?? '', duration: info.duration };
   log(`🎙 «${meta.title}» · ${meta.channel} · ${fmt(meta.duration)}`);
 

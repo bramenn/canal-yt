@@ -36,7 +36,7 @@ Lugar y época: ${setting}.
 Plano: ${p.shot}.
 Escena: ${p.desc}
 La violencia solo se sugiere (sombras, siluetas, reacciones); nada de sangre ni heridas.
-${hasRef ? 'La imagen adjunta es la referencia: mantén IDÉNTICOS al protagonista (cara, pelo, ropa) y el estilo de dibujo y entintado.' : ''}
+${hasRef ? 'La imagen adjunta es SOLO la referencia del personaje y del estilo: mantén IDÉNTICOS al protagonista (cara, pelo, ropa) y el estilo de dibujo y entintado, pero NO copies su fondo, encuadre ni composición: dibuja el lugar y el plano que pide esta escena.' : ''}
 Cuando la imagen esté generada, responde solo: listo.`;
 
 /** Dibuja una viñeta. Devuelve la ruta del archivo generado (en GEN_DIR). */

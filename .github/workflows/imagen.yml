@@ -1,4 +1,5 @@
-# Imagen de Estudio Fútbol para el k3s: se construye en GitHub y se sube a ghcr.io/bramenn/estudio-futbol
+# Imágenes de las apps para el k3s (Estudio Fútbol y Estudio Cómic): se construyen en GitHub y se suben a
+# ghcr.io/bramenn/estudio-futbol y ghcr.io/bramenn/estudio-comic
 # con dos etiquetas: el commit (para desplegar una versión concreta) y latest.
 # Se lanza sola al subir cambios de la app, o a mano desde Actions → «Imagen» → Run workflow.
 name: Imagen
@@ -6,7 +7,7 @@ name: Imagen
 on:
   push:
     branches: [master, feature/nuevoTipoVideo]
-    paths: [futbol/**, lib/**, public/js/**, package.json, package-lock.json, .github/workflows/imagen.yml]
+    paths: [futbol/**, comic/**, lib/**, public/js/**, scripts/**, package.json, package-lock.json, .github/workflows/imagen.yml]
   workflow_dispatch:
 
 permissions:
@@ -19,6 +20,10 @@ concurrency:
 
 jobs:
   build:
+    # una imagen por app: cada una con su Dockerfile
+    strategy:
+      matrix:
+        app: [futbol, comic]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -33,11 +38,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: futbol/Dockerfile
+          file: ${{ matrix.app }}/Dockerfile
           push: true
           tags: |
-            ghcr.io/bramenn/estudio-futbol:${{ github.sha }}
-            ghcr.io/bramenn/estudio-futbol:latest
+            ghcr.io/bramenn/estudio-${{ matrix.app }}:${{ github.sha }}
+            ghcr.io/bramenn/estudio-${{ matrix.app }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -46,6 +51,6 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Resumen
         run: |
-          echo "### Imagen lista" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`ghcr.io/bramenn/estudio-futbol:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "Desplegar: \`kubectl -n estudio-futbol set image deploy/estudio-futbol app=ghcr.io/bramenn/estudio-futbol:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Imagen lista: estudio-${{ matrix.app }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`ghcr.io/bramenn/estudio-${{ matrix.app }}:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Desplegar: \`kubectl -n estudio-futbol set image deploy/estudio-${{ matrix.app }} app=ghcr.io/bramenn/estudio-${{ matrix.app }}:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"

@@ -4,11 +4,8 @@
 //   npm run user -- list                      lista los usuarios
 //   npm run user -- del <usuario>             borra un usuario
 import { createInterface } from 'node:readline';
-import { pool, migrate } from '../lib/db.js';
+import { pool, migrate, q } from '../lib/db.js';
 import { createUser, setPassword, listUsers, deleteUser } from '../lib/auth.js';
-import { q } from '../lib/db.js';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 // sin terminal (p. ej. `printf 'clave\nclave\n' | npm run user -- add x`) las respuestas se leen de la entrada, línea a línea
 let piped = null;
@@ -43,7 +40,7 @@ const idOf = async (name) => {
 
 const [cmd, name, flag] = process.argv.slice(2);
 try {
-  await migrate(process.env.PROJECTS_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'projects'));
+  await migrate();
   if (cmd === 'add' && name) { await createUser(name, await newPassword(), flag === '--admin'); console.log(`✔ Usuario «${name.toLowerCase()}» creado${flag === '--admin' ? ' (administrador)' : ''}`); }
   else if (cmd === 'passwd' && name) { await setPassword(await idOf(name), await newPassword()); console.log(`✔ Contraseña de «${name}» cambiada`); }
   else if (cmd === 'del' && name) { await deleteUser(await idOf(name)); console.log(`✔ Usuario «${name}» borrado`); }

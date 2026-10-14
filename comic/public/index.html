@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🕵️</text></svg>" />
+  <title>Estudio Cómic</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css" />
+  <link rel="modulepreload" href="/app.js" />
+  <link rel="modulepreload" href="/podcast.js" />
+  <link rel="modulepreload" href="/comic.js" />
+  <link rel="modulepreload" href="/shared/api.js" />
+  <link rel="modulepreload" href="/shared/exporter.js" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#" id="go-home" title="Mis episodios"><span class="logo">🕵️</span><b>Estudio Cómic</b></a>
+    <div class="top-actions">
+      <button id="home-btn" class="ghost" hidden>← Mis episodios</button>
+      <span id="me" class="me"></span>
+      <button id="logout" class="ghost" title="Cerrar sesión">Salir</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============ INICIO ============ -->
+    <section id="home">
+      <div class="hero">
+        <h1>Del podcast al cómic</h1>
+        <p class="lead">Pega un episodio de YouTube (relatos, entrevistas, true crime). Se transcribe, la IA elige los mejores relatos y cada uno sale como un short vertical para TikTok con la voz original y viñetas dibujadas.</p>
+        <form id="new-form" class="new-form">
+          <div class="url-row">
+            <input name="url" id="podcast-url" type="url" inputmode="url" required placeholder="URL del episodio en YouTube (p. ej. https://youtu.be/…)" />
+            <button class="primary big">Preparar shorts</button>
+          </div>
+          <p class="hint">Un episodio de 1 h tarda unos 10-15 min en prepararse. Después, cada short se dibuja con tu cuenta de ChatGPT (≈ 1 min por viñeta).</p>
+        </form>
+      </div>
+      <div class="list-head"><h2>Mis episodios</h2></div>
+      <div id="project-list" class="cards"></div>
+    </section>
+
+    <!-- ============ SHORTS DE UN EPISODIO ============ -->
+    <section id="podcast-view" hidden>
+      <div id="pod-head" class="pod-head"></div>
+      <div id="pod-shorts" class="pod-shorts"></div>
+    </section>
+  </main>
+
+  <dialog id="ask" class="dlg small">
+    <h3 id="ask-title"></h3>
+    <p id="ask-text" class="hint"></p>
+    <textarea id="ask-input" rows="3" hidden></textarea>
+    <div class="dlg-actions"><button data-close>Cancelar</button><button id="ask-ok" class="primary">Aceptar</button></div>
+  </dialog>
+
+  <div id="task" class="task" hidden>
+    <div class="task-head">
+      <span class="task-icon"></span>
+      <div class="task-titles"><b id="task-title"></b><small id="task-step"></small></div>
+      <span id="task-time" class="time"></span>
+    </div>
+    <p id="task-now" class="task-now"></p>
+    <div class="task-bar"><i id="task-bar"></i></div>
+    <details id="task-details"><summary>Ver detalles</summary><ol id="task-log"></ol></details>
+    <div class="task-actions"><button id="task-min" class="ghost">Minimizar</button><button id="task-close">Cancelar</button></div>
+  </div>
+  <div id="toasts" class="toasts"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

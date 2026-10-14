@@ -3,7 +3,7 @@
 // node futbol/server.js  →  http://localhost:4322
 import http from 'node:http';
 import path from 'node:path';
-import { readFile, writeFile, readdir, mkdir, stat, rename } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import { existsSync, createReadStream } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { runClaude, enginesStatus, setEngine, sendJSON, readRaw, readBody, sse } from '../lib/claude.js';
@@ -14,12 +14,11 @@ import { checkImages } from './lib/watermark.js';
 import { autoClips } from './lib/autoclips.js';
 import { makeThumbs } from './lib/thumbs.js';
 import { pickPhotos } from './lib/photopick.js';
-import { ingest as podcastIngest } from './lib/podcast.js';
-import { drawShort } from './lib/comicart.js';
 import { exportCapcut, capcutStatus } from './lib/capcut.js';
 import { applyCreds, credsStatus, saveCreds, clearCred } from './lib/creds.js';
-import { migrate, listProjects as dbProjects, getProject, saveProject, deleteProject, getSetting, setSetting } from './lib/db.js';
-import { login, startSession, endSession, userOf, sameOrigin, createUser, setPassword, listUsers, deleteUser, countUsers } from './lib/auth.js';
+import { migrate, listProjects as dbProjects, getProject, saveProject, deleteProject, getSetting, setSetting } from '../lib/db.js';
+import { countUsers } from '../lib/auth.js';
+import { gate, serveFrom } from '../lib/web.js';
 import { codexLogin } from '../lib/codex.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -33,7 +32,6 @@ const exporter = await import('../lib/export.js');
 const media = mediaStore(path.join(PROJECTS, 'media'));
 const PORT = Number(process.env.PORT || 4322);
 const STATIC = { '/engine/': path.join(REPO, 'public/js/engine'), '/shared/': path.join(REPO, 'public/js'), '/': path.join(HERE, 'public') };
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
 await mkdir(PROJECTS, { recursive: true });
 // Postgres: tablas y, la primera vez, los proyectos y ajustes que había en archivos JSON
 const imported = await migrate(PROJECTS);
@@ -51,11 +49,6 @@ async function listProjects() {
   const out = [];
   for (const p of await dbProjects()) {
     try {
-      if (p.type === 'podcast') {
-        const panels = (p.shorts ?? []).flatMap((s) => s.panels ?? []);
-        out.push({ id: p.id, type: 'podcast', title: p.source?.title ?? 'Podcast', updated: p.updated, cover: panels.find((x) => x.image)?.image.url ?? null, shorts: p.shorts?.length ?? 0, shots: panels.length, withMedia: panels.filter((x) => x.image).length });
-        continue;
-      }
       const shots = (p.video?.segments ?? []).flatMap((s) => s.shots ?? []);
       // portada: la foto del jugador de la miniatura elegida o la primera foto del vídeo
       const cover = p.thumbs?.[p.thumbPick ?? 0]?.bg?.url ?? shots.find((s) => s.media && s.media.type !== 'video')?.media.url ?? null;
@@ -65,74 +58,18 @@ async function listProjects() {
   return out.sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0));
 }
 
-async function serveStatic(req, res, file) {
-  const st = await stat(file).catch(() => null);
-  if (!st?.isFile()) return sendJSON(res, 404, { error: 'not found' });
-  // el navegador guarda la copia y pregunta si cambió: «304» sin cuerpo si sigue igual
-  const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
-  if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' }); return res.end(); }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache', ETag: etag });
-  res.end(await readFile(file));
-}
-
-// el servidor solo escucha en 127.0.0.1: si hay un proxy delante (ngrok), la IP real es la ÚLTIMA de X-Forwarded-For
-// (la añade el proxy; las anteriores las puede inventar quien hace la petición)
-// con CLIENT_IP_HEADER (p. ej. cf-connecting-ip detrás de Cloudflare) se usa esa cabecera, que pone el proxy de confianza
-const clientIp = (req) => (process.env.CLIENT_IP_HEADER && String(req.headers[process.env.CLIENT_IP_HEADER.toLowerCase()] ?? '').trim())
-  || String(req.headers['x-forwarded-for'] ?? '').split(',').pop().trim() || req.socket.remoteAddress;
-
 http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   const sp = url.searchParams;
   let m;
   try {
-    // ---- login (lo único accesible sin sesión, junto a la página de login y sus estilos) ----
-    if (!sameOrigin(req)) return sendJSON(res, 403, { error: 'Petición de otro origen' });
-    if (p === '/login' || p === '/login.html') return serveStatic(req, res, path.join(HERE, 'public', 'login.html'));
-    if (p === '/app.css' || p === '/favicon.ico') return serveStatic(req, res, path.join(HERE, 'public', p.slice(1)));
-    if (p === '/api/login' && req.method === 'POST') {
-      const b = await readBody(req);
-      try {
-        const u = await login(b.username, b.password, clientIp(req));
-        await startSession(res, req, u.id);
-        return sendJSON(res, 200, { username: u.username, isAdmin: u.isAdmin });
-      } catch (e) { return sendJSON(res, 401, { error: e.message }); }
-    }
-    if (p === '/api/logout' && req.method === 'POST') { await endSession(res, req); return sendJSON(res, 200, { ok: true }); }
-
-    const user = await userOf(req);
-    if (!user) {
-      if (p.startsWith('/api/')) return sendJSON(res, 401, { error: 'Inicia sesión' });
-      res.writeHead(302, { Location: '/login' });
-      return res.end();
-    }
-    // lo que cambia claves, motor de IA o usuarios: solo el administrador
-    const ADMIN = /^\/api\/(credentials|engine|codex\/login|brave\/key|users)/.test(p) || (p === '/api/tts/elevenlabs/key' && req.method === 'POST');
+    // login, sesión, contraseña y usuarios (lib/web.js); si no hay sesión ya ha respondido
+    const user = await gate(req, res, p, path.join(HERE, 'public'));
+    if (!user) return;
+    // lo que cambia claves o el motor de IA: solo el administrador
+    const ADMIN = /^\/api\/(credentials|engine|codex\/login|brave\/key)/.test(p) || (p === '/api/tts/elevenlabs/key' && req.method === 'POST');
     if (ADMIN && !user.isAdmin) return sendJSON(res, 403, { error: 'Solo el administrador puede cambiar esto' });
-
-    if (p === '/api/me') return sendJSON(res, 200, user);
-    if (p === '/api/password' && req.method === 'POST') {
-      const b = await readBody(req);
-      try {
-        await login(user.username, b.current, clientIp(req)); // la actual tiene que ser correcta
-        await setPassword(user.id, b.next);
-        await startSession(res, req, user.id); // las demás sesiones se cierran; esta sigue
-        return sendJSON(res, 200, { ok: true });
-      } catch (e) { return sendJSON(res, 400, { error: e.message.replace('Usuario o contraseña incorrectos', 'La contraseña actual no es correcta') }); }
-    }
-    // ---- usuarios (administrador) ----
-    if (p === '/api/users' && req.method === 'GET') return sendJSON(res, 200, await listUsers());
-    if (p === '/api/users' && req.method === 'POST') {
-      const b = await readBody(req);
-      try { await createUser(b.username, b.password, !!b.isAdmin); return sendJSON(res, 200, await listUsers()); }
-      catch (e) { return sendJSON(res, 400, { error: e.message }); }
-    }
-    if ((m = p.match(/^\/api\/users\/(\d+)$/)) && req.method === 'DELETE') {
-      if (Number(m[1]) === user.id) return sendJSON(res, 400, { error: 'No puedes borrarte a ti mismo' });
-      await deleteUser(Number(m[1]));
-      return sendJSON(res, 200, await listUsers());
-    }
 
     // gasto en servicios de pago, visible para todos
     if (p === '/api/usage') {
@@ -248,32 +185,6 @@ http.createServer(async (req, res) => {
           .catch((e) => emit({ type: 'error', message: e.message }))
           .finally(() => emit({ type: 'end' }));
         return () => cancel();
-      });
-    }
-    // podcast → shorts en cómic: audio, transcripción, mejores relatos y guion de cada cómic
-    if (p === '/api/podcast' && req.method === 'POST') {
-      const body = await readBody(req);
-      return sse(res, (emit) => {
-        const ctrl = new AbortController();
-        let cancel = () => {};
-        const started = Date.now();
-        podcastIngest({ url: body.url, projectId: safeId(body.projectId) }, media, emit, (c) => { cancel = c; }, ctrl.signal)
-          .then((data) => emit({ type: 'result', data, cost: data.cost, secs: Math.round((Date.now() - started) / 1000) }))
-          .catch((e) => emit({ type: 'error', message: e.message }))
-          .finally(() => emit({ type: 'end' }));
-        return () => { ctrl.abort(); cancel(); };
-      });
-    }
-    // dibujar viñetas de un short con Codex (image_gen, plan de ChatGPT)
-    if (p === '/api/podcast/draw' && req.method === 'POST') {
-      const body = await readBody(req);
-      return sse(res, (emit) => {
-        const ctrl = new AbortController();
-        drawShort({ ...body, projectId: safeId(body.projectId) }, media, emit, ctrl.signal)
-          .then((data) => emit({ type: 'result', data }))
-          .catch((e) => emit({ type: 'error', message: e.message }))
-          .finally(() => emit({ type: 'end' }));
-        return () => ctrl.abort();
       });
     }
     // foto de cada plano elegida mirando los candidatos (encaje con la voz + limpia)
@@ -401,11 +312,7 @@ http.createServer(async (req, res) => {
     }
 
     // ---- estáticos: la app (futbol/public) y el motor compartido (public/js) ----
-    const prefix = Object.keys(STATIC).find((k) => p.startsWith(k));
-    const base = STATIC[prefix];
-    const file = path.normalize(path.join(base, p === '/' ? 'index.html' : decodeURIComponent(p.slice(prefix.length))));
-    if (!file.startsWith(base)) return sendJSON(res, 403, { error: 'forbidden' });
-    return serveStatic(req, res, file);
+    return serveFrom(req, res, p, STATIC);
   } catch (err) {
     console.error(err);
     if (!res.headersSent) sendJSON(res, 500, { error: err.message });

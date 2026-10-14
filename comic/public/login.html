@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🕵️</text></svg>" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Entrar · Estudio Cómic</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css" />
+  <style>
+    .login { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+    .login form { width: min(380px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 28px 24px; display: grid; gap: 16px; box-shadow: var(--shadow); }
+    .login h1 { font-size: 24px; font-weight: 800; text-align: center; }
+    .login .logo { font-size: 40px; text-align: center; }
+    .login .error { color: #fca5a5; font-size: 14px; min-height: 1.4em; text-align: center; }
+  </style>
+</head>
+<body>
+  <main class="login">
+    <form id="form" autocomplete="on">
+      <div class="logo">🕵️</div>
+      <h1>Estudio Cómic</h1>
+      <label>Usuario<input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus /></label>
+      <label>Contraseña<input name="password" type="password" autocomplete="current-password" required /></label>
+      <p class="error" id="error" role="alert"></p>
+      <button class="primary big" id="go">Entrar</button>
+    </form>
+  </main>
+  <script>
+    const form = document.getElementById('form');
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('go');
+      btn.disabled = true;
+      document.getElementById('error').textContent = '';
+      try {
+        const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || 'No se pudo entrar');
+        location.replace('/');
+      } catch (err) {
+        document.getElementById('error').textContent = err.message;
+        form.password.value = '';
+        form.password.focus();
+      } finally { btn.disabled = false; }
+    };
+  </script>
+</body>
+</html>

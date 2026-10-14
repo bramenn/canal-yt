@@ -41,6 +41,19 @@ npm run futbol     # → http://localhost:4322 (carga .env: DATABASE_URL y clave
 - **Con Docker**: `cp .env.example .env`, pon `CLAUDE_CODE_OAUTH_TOKEN` (sale de `claude setup-token`) o `ANTHROPIC_API_KEY`, y `docker compose up --build` (o `podman-compose up --build`). La imagen trae Node, ffmpeg, Claude Code y faster-whisper; proyectos, claves y el modelo de Whisper viven en volúmenes. Los MP4 se descargan desde el navegador al exportar.
 - Proyectos, audio, fotos y exportaciones en `futbol/projects/` (fuera de git). Las claves de voz se comparten con el estudio principal (`.secrets/`).
 
+
+## Estudio Cómic (`comic/`)
+
+App aparte (no comparte código con fútbol salvo `lib/`): de un episodio de podcast de YouTube (relatos, entrevistas, true crime) salen shorts verticales para TikTok con la voz original y el relato dibujado como novela gráfica noir.
+
+```bash
+npm run comic      # → http://localhost:4323 (mismos usuarios y Postgres que fútbol)
+```
+
+- **Preparar** · descarga el audio (yt-dlp), transcribe con Whisper (tiempo de cada palabra), la IA elige 3-6 relatos de 25-75 s con su gancho y texto para TikTok, y escribe el guion de viñetas de cada uno con un reparto fijo para todo el episodio (`comic/lib/podcast.js`).
+- **Dibujar** · cada viñeta con la herramienta de imágenes de Codex y la cuenta de ChatGPT (hace falta plan de pago, p. ej. Plus; ~1 min por viñeta). La primera viñeta sirve de referencia para que el protagonista sea el mismo en todas (`comic/lib/comicart.js`).
+- **MP4 vertical** · 1080×1920 con marco de cómic, gancho arriba y subtítulos palabra a palabra (`comic/public/comic.js`), exportado en el navegador.
+- **Común en `lib/`** · `db.js` (Postgres; los episodios van en la tabla `comics`), `auth.js` y `web.js` (login, sesión, usuarios, estáticos), `store.js` (archivos), `claude.js`/`codex.js` (IA), `export.js`. Usuarios: `npm run user -- add <usuario> [--admin]` (`scripts/user.js`).
 ## Cómo funciona el motor
 - `server.js` lanza `claude -p --output-format stream-json --json-schema …` con un prompt de sistema construido desde `style/estilo.md`. El progreso llega en vivo al panel del motor.
 - Al escribir un guion, Claude Code lee transcripciones de `style/referencias/` para calibrar el ritmo, investiga con WebSearch/WebFetch y devuelve JSON validado.

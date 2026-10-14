@@ -16,6 +16,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY lib lib
 COPY public/js public/js
+COPY scripts scripts
 COPY futbol futbol
 # carpetas de datos (volúmenes) con dueño "node" para que el volumen nazca con esos permisos
 RUN mkdir -p futbol/projects .secrets /home/node/.cache && chown -R node:node futbol/projects .secrets /home/node/.cache
