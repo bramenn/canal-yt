@@ -93,6 +93,22 @@ const streamTo = (ui, url, body) => stream(url, body, (e) => {
 }, ui.signal);
 
 // ================= shorts =================
+const nf = (n) => (n == null ? '–' : n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e4 ? `${Math.round(n / 1e3)} mil` : n.toLocaleString('es'));
+const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : `hace ${Math.round(m / 1440)} d`; };
+/** Cifras por plataforma: 👁 ❤ 💬, enlace y lo que subieron las vistas desde la lectura anterior. */
+function statsBox(p) {
+  const s = p.stats;
+  if (!s) return '';
+  const prev = s.history?.at(-2);
+  const row = (key, short, icon, name) => {
+    const x = s[key];
+    if (!x) return `<div class="stat off">${icon} ${name} <small>sin publicar</small></div>`;
+    const d = prev?.[short] != null && x.views != null ? x.views - prev[short] : 0;
+    return `<a class="stat" href="${esc(x.url)}" target="_blank" rel="noopener" title="Abrir en ${name}">${icon} <b>${nf(x.views)}</b>${d > 0 ? `<em>+${nf(d)}</em>` : ''} <span>❤ ${nf(x.likes)}</span> <span>💬 ${nf(x.comments)}</span></a>`;
+  };
+  return `<div class="stats">${row('youtube', 'yt', '▶️', 'YouTube')}${row('tiktok', 'tt', '🎵', 'TikTok')}${row('facebook', 'fb', '📘', 'Facebook')}
+    <small class="hint">Actualizado ${ago(s.at)}</small></div>`;
+}
 /** Bloque de la miniatura: vista pequeña, su texto y descargar 4K / YouTube / rehacer. */
 const thumbBox = (small, full, text, name, act) => (small ? `
   <div class="thumb-box">
@@ -125,6 +141,7 @@ function render() {
           <button data-act="remake" title="Guion, voz y montaje nuevos (con la voz elegida arriba)">🔄 Rehacer</button>
           <button data-act="del" class="danger" title="Borrar">🗑</button>
         </div>
+        ${statsBox(p)}
         ${thumbBox(p.thumbSmall, p.thumb, p.script?.thumb_text, slug(p.script?.title ?? p.id), 'thumb')}
         ${p.story?.sources?.length ? `<details class="hint"><summary>Fuentes</summary>${p.story.sources.map((u) => `<div><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></div>`).join('')}</details>` : ''}
       </div>
@@ -160,6 +177,13 @@ $('#auto').onclick = () => {
     return `${ev.data.made} short${ev.data.made === 1 ? '' : 's'} listo${ev.data.made === 1 ? '' : 's'}`;
   });
 };
+
+$('#stats').onclick = () => runTask('Leyendo las cifras de YouTube, TikTok y Facebook', async (ui) => {
+  const ev = await streamTo(ui, '/api/stats', {});
+  list = await getJSON('/api/projects');
+  render();
+  return `${ev.data.found} short${ev.data.found === 1 ? '' : 's'} con cifras`;
+});
 
 $('#logout').onclick = async () => { await postJSON('/api/logout', {}).catch(() => {}); location.replace('/login'); };
 

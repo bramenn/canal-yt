@@ -13,5 +13,8 @@
   },
   "dependencies": {
     "pg": "^8.23.1"
+  },
+  "optionalDependencies": {
+    "playwright-core": "^1.56.1"
   }
 }

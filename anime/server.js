@@ -15,6 +15,7 @@ import { findStories, thumbText } from './lib/story.js';
 import { makeThumb, firstFrame } from './lib/thumb.js';
 import { readdir, readFile } from 'node:fs/promises';
 import { makeShort, makeTiktok } from './lib/make.js';
+import { refreshStats } from './lib/stats.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // antes de cargar la voz: sus carpetas cuelgan de PROJECTS_DIR
@@ -34,6 +35,13 @@ const safeId = (id) => String(id).replace(/[^a-z0-9_-]/gi, '').slice(0, 80);
 // las dos voces del canal (biblioteca de ElevenLabs): se elige una al crear o rehacer
 const VOICES = { mujer: { id: 'ajOR9IDAaubDK5qtLUqQ', title: 'Mujer' }, hombre: { id: 'qRUgOhnxGASxirG4fKjv', title: 'Hombre (David)' } };
 const voiceOf = (key) => VOICES[key] ?? VOICES.hombre;
+
+// cifras de YouTube, TikTok y Facebook: al arrancar (a los 2 min) y cada 30 min; una sola lectura a la vez
+let statsRun = null;
+const updateStats = (log = () => {}) => (statsRun ??= refreshStats(listProjects(TABLE).then((x) => x), null, log)
+  .finally(() => { statsRun = null; }));
+setTimeout(() => updateStats().catch((e) => console.error('cifras:', e.message)), 120000);
+setInterval(() => updateStats().catch((e) => console.error('cifras:', e.message)), 30 * 60000);
 
 /** Tarea larga por SSE: result / error / end, cancelable al cerrar la conexión. */
 const task = (res, run) => sse(res, (emit) => {
@@ -92,6 +100,10 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       if (!old) return sendJSON(res, 404, { error: 'No existe' });
       const { voice } = await readBody(req);
       return task(res, (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id));
+    }
+    // ---- cifras de las publicaciones (ahora mismo) ----
+    if (p === '/api/stats' && req.method === 'POST') {
+      return task(res, async (emit) => ({ found: await updateStats((text) => emit({ type: 'log', text })) }));
     }
     // ---- versión TikTok (> 1 min) de un short ya hecho: guion largo, voz y montaje; misma miniatura ----
     if ((m = p.match(/^\/api\/tiktok\/([\w-]+)$/)) && req.method === 'POST') {
