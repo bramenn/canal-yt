@@ -19,6 +19,17 @@ export const closePodcast = () => stop();
 
 const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const drawn = (s) => (s.panels ?? []).filter((x) => x.image).length;
+function continuation(source, seconds) {
+  if (!source?.url) return '';
+  const at = Math.max(0, Math.floor(seconds));
+  try {
+    const url = new URL(source.url);
+    url.searchParams.set('t', `${at}s`);
+    return `🎬 Continúa la historia desde ${fmt(seconds)}: ${url}`;
+  } catch {
+    return `🎬 Continúa la historia desde ${fmt(seconds)}: ${source.url}${source.url.includes('?') ? '&' : '?'}t=${at}s`;
+  }
+}
 
 function render() {
   const { $, esc } = ctx;
@@ -111,7 +122,8 @@ async function onClick(e) {
   if (panelBtn) return editPanel(n, Number(panelBtn.dataset.panel));
   if (act === 'play') play(n);
   if (act === 'copy') {
-    await navigator.clipboard.writeText(`${s.caption}\n\n${(s.hashtags ?? []).map((h) => `#${h.replace(/^#/, '')}`).join(' ')}\n\n🎙 Audio: ${project.source?.channel ?? ''} · ${BRAND}`);
+    const hashtags = (s.hashtags ?? []).map((h) => `#${h.replace(/^#/, '')}`).join(' ');
+    await navigator.clipboard.writeText([s.caption, hashtags, `🎙 Audio: ${project.source?.channel ?? ''} · ${BRAND}`, continuation(project.source, s.start)].filter(Boolean).join('\n\n'));
     ctx.toast('Texto para TikTok copiado', 'ok');
   }
   if (act === 'draw') {
