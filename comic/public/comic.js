@@ -21,6 +21,7 @@ const ready = new Map();
 export async function preloadShort(short) {
   await document.fonts.load('80px Anton').catch(() => {}); // si no, el primer dibujo sale con otra letra
   for (const p of short.panels ?? []) if (p.image?.url) ready.set(p.image.url, await loadPanel(p.image.url));
+  if (short.cover?.small) ready.set(short.cover.small, await loadPanel(short.cover.small));
 }
 
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
@@ -188,6 +189,9 @@ function drawBrand(ctx) {
 
 /** Dibuja el instante t (segundos desde el inicio del short). */
 export function drawComic(ctx, short, t, { credit = '' } = {}) {
+  // primer fotograma: la miniatura (0,3 s: lo que se ve en búsquedas y en el perfil sin frenar el gancho)
+  const cover = t < 0.3 && ready.get(short.cover?.small);
+  if (cover) { ctx.drawImage(cover, 0, 0, CW, CH); return; }
   const beat = short.fx?.beat;
   const since = beat != null ? t - beat : -1;
   // temblor de pantalla en el clímax (se apaga en medio segundo)

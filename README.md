@@ -52,6 +52,7 @@ npm run comic      # → http://localhost:4323 (mismos usuarios y Postgres que f
 
 - **Preparar** · descarga el audio (yt-dlp), transcribe con Whisper (tiempo de cada palabra), la IA elige 3-6 relatos de 25-75 s con su gancho y texto para TikTok, y escribe el guion de viñetas de cada uno con un reparto fijo para todo el episodio (`comic/lib/podcast.js`).
 - **Dibujar** · cada viñeta con la herramienta de imágenes de Codex y la cuenta de ChatGPT (hace falta plan de pago, p. ej. Plus; ~1 min por viñeta). La primera viñeta sirve de referencia para que el protagonista sea el mismo en todas (`comic/lib/comicart.js`).
+- **Miniatura** · «🖼 Hacer miniatura» en cada short: Codex dibuja una portada noir con el protagonista (una viñeta de referencia) y el texto de gancho se pone a 4K (`comic/lib/cover.js`, `lib/thumbnail.js`). Es también el primer fotograma (0,3 s) del MP4; se descarga en 4K y en 1080×1920 para YouTube.
 - **MP4 vertical** · 1080×1920 con marco de cómic, gancho arriba y subtítulos palabra a palabra (`comic/public/comic.js`), exportado en el navegador.
 - **Común en `lib/`** · `db.js` (Postgres; los episodios van en la tabla `comics`), `auth.js` y `web.js` (login, sesión, usuarios, estáticos), `store.js` (archivos), `claude.js`/`codex.js` (IA), `export.js`. Usuarios: `npm run user -- add <usuario> [--admin]` (`scripts/user.js`).
 
@@ -67,7 +68,7 @@ npm run anime      # → http://localhost:4324 (mismos usuarios y Postgres; tabl
 - **Guion** · fórmula AniDosis: gancho, «el problema es que…», datos y remate; título con MAYÚSCULAS, palabras a resaltar en amarillo/rojo y qué se ve en cada frase.
 - **Voz** · a elegir entre las dos voces del canal (hombre o mujer, de la biblioteca de ElevenLabs), alineada palabra a palabra (Whisper).
 - **Miniatura** · también es el primer fotograma (0,3 s). La IA elige el mejor primer plano del tráiler, Codex (image_gen, ChatGPT Plus) lo redibuja como portada sin texto y el texto (2-4 palabras, una en amarillo, en la zona segura de arriba) se pone a 4K (`anime/lib/thumb.js`). Se descarga en 4K (2160×3840) y en 1080×1920 (< 2 MB, para YouTube). Si Codex no puede, se usa el fotograma retocado.
-- **Montaje** · ffmpeg en el servidor (`anime/lib/montage.js`): cortes de ~2,6 s sobre escenas del tráiler/PV oficial (sin negros, logos ni créditos), recorte 9:16, imágenes de Brave con desplazamiento, subtítulos ASS de 1-2 palabras en Anton (`anime/fonts`, OFL) y la marca del canal.
+- **Montaje** · ffmpeg en el servidor (`anime/lib/montage.js`): cortes de ~2,6 s sobre escenas del tráiler/PV oficial (sin negros, logos ni créditos), recorte 9:16, imágenes de Brave con desplazamiento, subtítulos ASS de 1-2 palabras en Anton (`lib/fonts`, OFL) y la marca del canal.
 ## Cómo funciona el motor
 - `server.js` lanza `claude -p --output-format stream-json --json-schema …` con un prompt de sistema construido desde `style/estilo.md`. El progreso llega en vivo al panel del motor.
 - Al escribir un guion, Claude Code lee transcripciones de `style/referencias/` para calibrar el ritmo, investiga con WebSearch/WebFetch y devuelve JSON validado.

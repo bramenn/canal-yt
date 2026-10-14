@@ -51,8 +51,12 @@ function render() {
           <button class="primary" data-act="draw">🖌 ${drawn(s) ? (drawn(s) === s.panels.length ? 'Volver a dibujar todo' : `Dibujar las ${s.panels.length - drawn(s)} que faltan`) : `Dibujar ${s.panels?.length ?? 0} viñetas`}</button>
           <button data-act="export" ${drawn(s) ? '' : 'disabled'}>⬇ MP4 vertical</button>
           ${s.fx ? '' : '<button data-act="fx">✨ Efectos y sonido</button>'}
+          <button data-act="cover" ${drawn(s) ? '' : 'disabled title="Primero dibuja alguna viñeta (el personaje sale de ellas)"'}>🖼 ${s.cover ? 'Rehacer miniatura' : 'Hacer miniatura'}</button>
           <button data-act="copy">📋 Texto para TikTok</button>
         </div>
+        ${s.cover ? `<div class="row wrap hint">🖼 «${esc(s.cover.text)}» ·
+          <a href="${esc(s.cover.full)}" download="${esc(ctx.slug(s.title))}-miniatura-4k.jpg">⬇ Miniatura 4K</a> ·
+          <a href="${esc(s.cover.small)}" download="${esc(ctx.slug(s.title))}-miniatura.jpg">⬇ Miniatura YouTube</a></div>` : ''}
       </div>
     </div>`).join('');
   project.shorts.forEach((s, n) => paint(n, 0.6)); // a 0,6 s ya se ve el gancho
@@ -131,6 +135,7 @@ async function onClick(e) {
     drawPanels(n, todo);
   }
   if (act === 'export') exportShort(n);
+  if (act === 'cover') makeCoverFor(n);
   if (act === 'fx') addFx(n);
 }
 
@@ -173,6 +178,19 @@ function addFx(n) {
     ctx.save();
     render();
     return `Clímax a los ${s.fx.beat.toFixed(1)} s · pulsa ▶ para escucharlo`;
+  });
+}
+
+/** Miniatura del short (portada noir de Codex + texto a 4K); también es el primer fotograma del MP4. */
+function makeCoverFor(n) {
+  const s = project.shorts[n];
+  ctx.runTask(`Miniatura de «${s.title}»`, async (ui) => {
+    const { title, hook, caption, character, setting, panels } = s;
+    const ev = await ctx.streamTo(ui, '/api/podcast/cover', { projectId: project.id, n, short: { title, hook, caption, character, setting, panels } });
+    s.cover = ev.data;
+    ctx.save();
+    render();
+    return 'Miniatura lista: ya es el primer fotograma del vídeo';
   });
 }
 

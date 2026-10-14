@@ -14,6 +14,7 @@ import { gate, serveFrom } from '../lib/web.js';
 import { fileStore } from '../lib/store.js';
 import { ingest, fxShort } from './lib/podcast.js';
 import { drawShort } from './lib/comicart.js';
+import { makeCover } from './lib/cover.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.dirname(HERE);
@@ -71,6 +72,16 @@ http.createServer(async (req, res) => {
       return task(res, async (emit, track) => { const cost = await fxShort(short, emit, track); return { fx: short.fx, cost }; });
     }
     // ---- viñetas de un short con Codex (image_gen, plan de ChatGPT) ----
+    // ---- miniatura de un short (también su primer fotograma): portada noir de Codex + texto a 4K ----
+    if (p === '/api/podcast/cover' && req.method === 'POST') {
+      const { projectId, n, short } = await readBody(req);
+      // referencia del personaje: un primer plano ya dibujado o, si no, cualquier viñeta dibujada
+      const drawnPanels = (short.panels ?? []).filter((x) => x.image?.url);
+      const ref = drawnPanels.find((x) => /primer|detalle/i.test(x.shot ?? '')) ?? drawnPanels[0];
+      let refFile = null;
+      try { refFile = ref ? media.fileOf(ref.image.url) : null; } catch {}
+      return task(res, (emit, track, signal) => makeCover({ short, n: Number(n) || 0, dir: media.dirOf(safeId(projectId)), refFile }, emit, track, signal));
+    }
     if (p === '/api/podcast/draw' && req.method === 'POST') {
       const body = await readBody(req);
       return task(res, (emit, track, signal) => drawShort({ ...body, projectId: safeId(body.projectId) }, media, emit, signal));

@@ -5,13 +5,12 @@ import { execFile } from 'node:child_process';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { run, ytdlp, search } from '../../lib/ytdlp.js';
 import { searchImages, UA } from '../../lib/brave.js';
 import { claudeStep } from '../../lib/claude.js';
+import { FONTS } from '../../lib/thumbnail.js';
 import { makeThumb } from './thumb.js';
 
-const FONTS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fonts');
 export const BRAND = '@notianimes';
 const W = 1080, H = 1920, FPS = 30;
 const CUT = 2.6;                           // duración objetivo de cada corte
