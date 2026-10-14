@@ -1,0 +1,85 @@
+# Estudio Anime en el k3s de Contabo: https://anime.bramen.org (Cloudflare hace el TLS; aquí solo Ingress http).
+# Comparte con Estudio Fútbol (deploy/k8s/estudio-futbol.yaml) el namespace, Postgres (mismos usuarios; sus shorts
+# van en la tabla «animes») y el disco estudio-data: carpeta propia para sus shorts y la misma sesión de
+# ChatGPT/Codex, claves (ElevenLabs, Brave) y modelos de Whisper. El disco es de un solo nodo: los pods van al mismo.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: estudio-anime
+  namespace: estudio-futbol
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: estudio-anime } }
+  template:
+    metadata: { labels: { app: estudio-anime } }
+    spec:
+      imagePullSecrets: [{ name: ghcr-pull }]
+      initContainers:
+        # local-path no aplica fsGroup: la carpeta se prepara para el usuario "node" (1000) de la imagen
+        - name: permisos
+          image: docker.io/library/busybox:1.37
+          command: [sh, -c, 'mkdir -p /data/anime-projects && chown 1000:1000 /data/anime-projects']
+          volumeMounts: [{ name: data, mountPath: /data }]
+      containers:
+        - name: app
+          image: ghcr.io/bramenn/estudio-anime:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4324 }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: futbol-db, key: DATABASE_URL } }
+            - { name: SECURE_COOKIES, value: '1' }
+            - { name: CLIENT_IP_HEADER, value: cf-connecting-ip }
+            - { name: CODEX_IPV4, value: '1' }   # el clúster no tiene salida IPv6: Codex sale por un puente IPv4
+          readinessProbe:
+            httpGet: { path: /login, port: 4324 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /login, port: 4324 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            # ffmpeg y Whisper (alinear la voz)
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 3Gi }
+          volumeMounts:
+            - { name: data, mountPath: /app/anime/projects, subPath: anime-projects } # tráileres, voz y MP4
+            - { name: data, mountPath: /app/.secrets, subPath: secrets }
+            - { name: data, mountPath: /home/node/.cache, subPath: cache }
+            - { name: data, mountPath: /home/node/.codex, subPath: codex }
+            - { name: data, mountPath: /home/node/.claude, subPath: claude }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: estudio-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: estudio-anime
+  namespace: estudio-futbol
+spec:
+  selector: { app: estudio-anime }
+  ports: [{ port: 80, targetPort: 4324 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: estudio-anime
+  namespace: estudio-futbol
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+    nginx.ingress.kubernetes.io/proxy-request-buffering: 'off'
+    nginx.ingress.kubernetes.io/proxy-buffering: 'off'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: anime.bramen.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: estudio-anime, port: { number: 80 } }

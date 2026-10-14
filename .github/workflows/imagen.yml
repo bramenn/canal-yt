@@ -1,5 +1,5 @@
-# Imágenes de las apps para el k3s (Estudio Fútbol y Estudio Cómic): se construyen en GitHub y se suben a
-# ghcr.io/bramenn/estudio-futbol y ghcr.io/bramenn/estudio-comic
+# Imágenes de las apps para el k3s (Estudio Fútbol, Cómic y Anime): se construyen en GitHub y se suben a
+# ghcr.io/bramenn/estudio-futbol, estudio-comic y estudio-anime
 # con dos etiquetas: el commit (para desplegar una versión concreta) y latest.
 # Se lanza sola al subir cambios de la app, o a mano desde Actions → «Imagen» → Run workflow.
 name: Imagen
@@ -7,7 +7,7 @@ name: Imagen
 on:
   push:
     branches: [master, feature/nuevoTipoVideo]
-    paths: [futbol/**, comic/**, lib/**, public/js/**, scripts/**, package.json, package-lock.json, .github/workflows/imagen.yml]
+    paths: [futbol/**, comic/**, anime/**, lib/**, public/js/**, scripts/**, package.json, package-lock.json, .github/workflows/imagen.yml]
   workflow_dispatch:
 
 permissions:
@@ -23,7 +23,7 @@ jobs:
     # una imagen por app: cada una con su Dockerfile
     strategy:
       matrix:
-        app: [futbol, comic]
+        app: [futbol, comic, anime]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

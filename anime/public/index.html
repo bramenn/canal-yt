@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍥</text></svg>" />
+  <title>Estudio Anime</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css" />
+  <link rel="modulepreload" href="/app.js" />
+  <link rel="modulepreload" href="/shared/api.js" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#" title="Estudio Anime"><span class="logo">🍥</span><b>Estudio Anime</b></a>
+    <div class="top-actions">
+      <span id="voice" class="me"></span>
+      <span id="me" class="me"></span>
+      <button id="logout" class="ghost" title="Cerrar sesión">Salir</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>Shorts de anime en automático</h1>
+      <p class="lead">La IA busca las noticias y curiosidades de anime con más gancho, escribe el guion al estilo AniDosis, pone tu voz de ElevenLabs y monta el vídeo vertical con escenas de los tráileres oficiales y subtítulos. Marca: @notianimes.</p>
+      <div class="auto">
+        <select id="count"><option value="1">1 short</option><option value="3" selected>3 shorts</option><option value="5">5 shorts</option></select>
+        <button id="auto" class="primary big">🍥 Crear shorts de hoy</button>
+      </div>
+      <p class="hint" style="margin-top:10px">Cada short tarda unos 3-6 min (buscar, voz, descargar tráileres y montar).</p>
+    </section>
+    <div class="list-head"><h2>Mis shorts</h2></div>
+    <div id="shorts" class="shorts"></div>
+  </main>
+
+  <dialog id="ask" class="dlg small">
+    <h3 id="ask-title"></h3>
+    <p id="ask-text" class="hint"></p>
+    <textarea id="ask-input" rows="3" hidden></textarea>
+    <div class="dlg-actions"><button data-close>Cancelar</button><button id="ask-ok" class="primary">Aceptar</button></div>
+  </dialog>
+
+  <div id="task" class="task" hidden>
+    <div class="task-head">
+      <span class="task-icon"></span>
+      <div class="task-titles"><b id="task-title"></b><small id="task-step"></small></div>
+      <span id="task-time" class="time"></span>
+    </div>
+    <p id="task-now" class="task-now"></p>
+    <div class="task-bar"><i id="task-bar"></i></div>
+    <details id="task-details"><summary>Ver detalles</summary><ol id="task-log"></ol></details>
+    <div class="task-actions"><button id="task-min" class="ghost">Minimizar</button><button id="task-close">Cancelar</button></div>
+  </div>
+  <div id="toasts" class="toasts"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

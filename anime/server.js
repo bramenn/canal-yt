@@ -1,0 +1,122 @@
+// Estudio Anime: shorts verticales de curiosidades y noticias de anime al estilo AniDosis, en automático:
+// la IA busca las historias del día, escribe el guion, pone la voz (ElevenLabs) y se monta el MP4 con escenas
+// de los tráileres oficiales y subtítulos. Usa lo común de lib/ y guarda sus shorts en la tabla «animes».
+// node anime/server.js  →  http://localhost:4324
+import http from 'node:http';
+import path from 'node:path';
+import { mkdir, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { sendJSON, readBody, sse, setEngine } from '../lib/claude.js';
+import { migrate, listProjects, getProject, saveProject, deleteProject, getSetting } from '../lib/db.js';
+import { countUsers } from '../lib/auth.js';
+import { gate, serveFrom } from '../lib/web.js';
+import { findStories } from './lib/story.js';
+import { makeShort } from './lib/make.js';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+// antes de cargar la voz: sus carpetas cuelgan de PROJECTS_DIR
+process.env.PROJECTS_DIR ||= path.join(HERE, 'projects');
+const PROJECTS = process.env.PROJECTS_DIR;
+const MEDIA = path.join(PROJECTS, 'media');
+const tts = await import('../lib/tts/index.js');
+const aligner = await import('../lib/align/index.js');
+const { listLatamVoices } = await import('../lib/tts/elevenlabs.js');
+const PORT = Number(process.env.PORT || 4324);
+const TABLE = 'animes';
+await mkdir(MEDIA, { recursive: true });
+await migrate();
+if (!process.env.AI_ENGINE) setEngine(await getSetting('engine'));
+if (!(await countUsers())) console.log('\n  ⚠️  No hay usuarios: crea el primero con  npm run user -- add <usuario> --admin\n');
+
+const safeId = (id) => String(id).replace(/[^a-z0-9_-]/gi, '').slice(0, 80);
+/** La voz: tu primera voz favorita de ElevenLabs (las de tu cuenta). */
+async function voice() {
+  const items = (await listLatamVoices({})).items;
+  const v = items.find((x) => x.favorite) ?? items[0];
+  if (!v) throw new Error('No hay voces de ElevenLabs: revisa la clave en Estudio Fútbol ⚙');
+  return v;
+}
+
+/** Tarea larga por SSE: result / error / end, cancelable al cerrar la conexión. */
+const task = (res, run) => sse(res, (emit) => {
+  const ctrl = new AbortController();
+  let cancel = () => {};
+  const started = Date.now();
+  run(emit, (c) => { cancel = c; }, ctrl.signal)
+    .then((data) => emit({ type: 'result', data, cost: data?.cost, secs: Math.round((Date.now() - started) / 1000) }))
+    .catch((e) => emit({ type: 'error', message: e.message }))
+    .finally(() => emit({ type: 'end' }));
+  return () => { ctrl.abort(); cancel(); };
+});
+
+/** Hace un short y lo guarda; si falla, lo cuenta y sigue (en automático no se para todo por uno). */
+async function makeAndSave(story, user, emit, track, signal, id = Date.now().toString(36)) {
+  const v = await voice();
+  const p = await makeShort({ id, story, voiceId: v.id }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
+  p.voice.title = v.title;
+  await saveProject(p, user.id, TABLE);
+  emit({ type: 'short', project: p });
+  return p;
+}
+
+http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const p = url.pathname;
+  let m;
+  try {
+    const user = await gate(req, res, p, path.join(HERE, 'public'));
+    if (!user) return;
+
+    // ---- automático: historias del día → un short por historia ----
+    if (p === '/api/auto' && req.method === 'POST') {
+      const { count = 3 } = await readBody(req);
+      return task(res, async (emit, track, signal) => {
+        const log = (text) => emit({ type: 'log', text });
+        const avoid = (await listProjects(TABLE)).map((x) => `${x.story?.anime}: ${x.story?.angle}`);
+        log('🔎 Buscando las historias de anime con más gancho…');
+        const { stories, cost: c0 } = await findStories({ count: Math.min(5, Math.max(1, Number(count) || 3)), avoid }, emit, track);
+        log(`📰 ${stories.length} historias: ${stories.map((s) => s.anime).join(' · ')}`);
+        let cost = c0, ok = 0;
+        for (const [i, story] of stories.entries()) {
+          if (signal.aborted) break;
+          log(`━━ Short ${i + 1} de ${stories.length}: ${story.anime}`);
+          try { cost += (await makeAndSave(story, user, emit, track, signal, `${Date.now().toString(36)}${i}`)).cost; ok++; }
+          catch (e) { log(`⚠️ ${story.anime}: ${e.message.slice(0, 200)}`); }
+        }
+        return { made: ok, cost };
+      });
+    }
+    // ---- rehacer un short (misma historia, guion y montaje nuevos) ----
+    if ((m = p.match(/^\/api\/remake\/([\w-]+)$/)) && req.method === 'POST') {
+      const old = await getProject(safeId(m[1]), TABLE);
+      if (!old) return sendJSON(res, 404, { error: 'No existe' });
+      return task(res, (emit, track, signal) => makeAndSave(old.story, user, emit, track, signal, old.id));
+    }
+    if (p.startsWith('/media/')) {
+      // vídeos con Range (el navegador pide trozos para poder saltar)
+      const rel = decodeURIComponent(p.slice('/media/'.length));
+      const file = path.normalize(path.join(MEDIA, rel));
+      const st = file.startsWith(MEDIA + path.sep) ? await stat(file).catch(() => null) : null;
+      if (!st?.isFile()) return sendJSON(res, 404, { error: 'not found' });
+      const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range ?? '');
+      const type = file.endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream';
+      if (!range) { res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'Accept-Ranges': 'bytes' }); return createReadStream(file).pipe(res); }
+      const a = range[1] ? +range[1] : 0, b = range[2] ? +range[2] : st.size - 1;
+      res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${a}-${b}/${st.size}`, 'Content-Length': b - a + 1, 'Accept-Ranges': 'bytes' });
+      return createReadStream(file, { start: a, end: b }).pipe(res);
+    }
+
+    // ---- shorts ----
+    if (p === '/api/projects' && req.method === 'GET') return sendJSON(res, 200, await listProjects(TABLE));
+    if ((m = p.match(/^\/api\/projects\/([\w-]+)$/)) && req.method === 'DELETE') {
+      return (await deleteProject(safeId(m[1]), TABLE)) ? sendJSON(res, 200, { ok: true }) : sendJSON(res, 404, { error: 'No existe' });
+    }
+    if (p === '/api/voice') { try { const v = await voice(); return sendJSON(res, 200, { id: v.id, title: v.title }); } catch (e) { return sendJSON(res, 400, { error: e.message }); } }
+
+    return serveFrom(req, res, p, { '/shared/': path.join(HERE, '..', 'public/js'), '/': path.join(HERE, 'public') });
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) sendJSON(res, 500, { error: err.message });
+  }
+}).listen(PORT, process.env.HOST || '127.0.0.1', () => console.log(`\n  🍥 Estudio Anime en http://localhost:${PORT}\n`));
