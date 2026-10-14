@@ -92,6 +92,19 @@ const streamTo = (ui, url, body) => stream(url, body, (e) => {
 }, ui.signal);
 
 // ================= shorts =================
+/** Bloque de la miniatura: vista pequeña, su texto y descargar 4K / YouTube / rehacer. */
+const thumbBox = (small, full, text, name, act) => (small ? `
+  <div class="thumb-box">
+    <img src="${esc(small)}" alt="" />
+    <div class="info">
+      <b>Miniatura</b><small>«${esc(text ?? '')}» · también es el primer fotograma</small>
+      <div class="group">
+        <a class="btn" href="${esc(full)}" download="${esc(name)}-miniatura-4k.jpg" title="2160×3840">⬇ 4K</a>
+        <a class="btn" href="${esc(small)}" download="${esc(name)}-miniatura.jpg" title="1080×1920, menos de 2 MB (para subir a YouTube)">⬇ YouTube</a>
+        <button data-act="${act}" title="Texto y dibujo nuevos">🖼 Rehacer</button>
+      </div>
+    </div>
+  </div>` : `<div class="row"><button data-act="${act}">🖼 Hacer miniatura</button></div>`);
 const tiktokText = (p) => `${p.script.title}\n\n${p.script.description}\n\n${(p.script.hashtags ?? []).map((h) => `#${h.replace(/^#/, '')}`).join(' ')}`;
 
 function render() {
@@ -102,14 +115,12 @@ function render() {
         <div class="title">${esc(p.script?.title)}</div>
         <div class="hint">${esc(p.story?.anime)} · ${esc(p.story?.angle)}${p.voice?.title ? ` · 🎙 ${esc(p.voice.title)}` : ''}</div>
         <div class="row wrap">
-          <a class="btn" href="${esc(p.video)}" download="${esc(slug(p.script?.title ?? p.id))}.mp4">⬇ MP4</a>
-          ${p.thumb ? `<a class="btn" href="${esc(p.thumb)}" download="${esc(slug(p.script?.title ?? p.id))}-miniatura-4k.jpg" title="2160×3840">⬇ Miniatura 4K</a>
-          <a class="btn" href="${esc(p.thumbSmall)}" download="${esc(slug(p.script?.title ?? p.id))}-miniatura.jpg" title="1080×1920, menos de 2 MB (para subir a YouTube)">⬇ Miniatura YouTube</a>` : ''}
-          <button data-act="thumb">🖼 ${p.thumb ? 'Rehacer miniatura' : 'Hacer miniatura'}</button>
-          <button data-act="copy">📋 Título y texto</button>
-          <button data-act="remake">🔄 Rehacer</button>
-          <button data-act="del" class="danger">🗑</button>
+          <a class="btn primary" href="${esc(p.video)}" download="${esc(slug(p.script?.title ?? p.id))}.mp4">⬇ MP4</a>
+          <button data-act="copy" title="Título, descripción y hashtags">📋 Texto</button>
+          <button data-act="remake" title="Guion, voz y montaje nuevos (con la voz elegida arriba)">🔄 Rehacer</button>
+          <button data-act="del" class="danger" title="Borrar">🗑</button>
         </div>
+        ${thumbBox(p.thumbSmall, p.thumb, p.script?.thumb_text, slug(p.script?.title ?? p.id), 'thumb')}
         ${p.story?.sources?.length ? `<details class="hint"><summary>Fuentes</summary>${p.story.sources.map((u) => `<div><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></div>`).join('')}</details>` : ''}
       </div>
     </div>`).join('') : '<div class="empty">Aún no hay shorts. Pulsa «Crear shorts de hoy».</div>';

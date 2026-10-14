@@ -6,8 +6,12 @@ import { exportVideo, canExportFast, downloadUrl } from '/shared/exporter.js';
 
 let ctx = null;          // utilidades de app.js: { $, esc, toast, ask, runTask, streamTo, save, slug }
 let project = null;
-let playing = null;      // { n, src, raf }
+let playing = null;      // { n, src, t0, raf }: el que suena (t0 = instante del AudioContext en que el short estaría en 0 s)
 let ac = null;           // AudioContext de la vista previa
+let master = null;       // volumen de la vista previa
+const pos = {};          // posición de cada short en pausa (s)
+let vol = 1, muted = false;
+try { vol = Number(localStorage.getItem('comic.vol') ?? 1); muted = localStorage.getItem('comic.muted') === '1'; } catch {}
 
 export function openPodcast(p, helpers) {
   ctx = helpers;
@@ -38,7 +42,17 @@ function render() {
     <p class="hint">🎙 ${esc(src.channel ?? '')} · ${fmt(src.duration ?? 0)} · <a href="${esc(src.url ?? '#')}" target="_blank" rel="noopener">ver episodio</a> · ${project.shorts.length} shorts</p>`;
   $('#pod-shorts').innerHTML = project.shorts.map((s, n) => `
     <div class="pod-short" data-n="${n}">
-      <div class="pod-preview"><canvas width="${CW}" height="${CH}"></canvas><button class="big-play" data-act="play" title="Reproducir">▶</button></div>
+      <div class="pod-preview">
+        <canvas width="${CW}" height="${CH}" data-act="play" title="Reproducir / pausar"></canvas>
+        <button class="big-play" data-act="play" title="Reproducir">▶</button>
+        <div class="pod-ctrl">
+          <button class="pp" data-act="play" title="Reproducir / pausar">▶</button>
+          <input class="seek" type="range" min="0" max="${(s.end - s.start + 0.3).toFixed(2)}" step="0.05" value="0" title="Ir a…" />
+          <span class="tm">0:00 / ${fmt(s.end - s.start)}</span>
+          <button class="mute" data-act="mute" title="Silenciar">${muted ? '🔇' : '🔊'}</button>
+          <input class="vol" type="range" min="0" max="1" step="0.05" value="${vol}" title="Volumen" />
+        </div>
+      </div>
       <div class="pod-info">
         <h3>${esc(s.title)} <span class="hint">· ${Math.round(s.end - s.start)} s · ${fmt(s.start)}–${fmt(s.end)} del episodio</span></h3>
         <p class="hint">${esc(s.why ?? '')}</p>
@@ -51,17 +65,35 @@ function render() {
           <button class="primary" data-act="draw">🖌 ${drawn(s) ? (drawn(s) === s.panels.length ? 'Volver a dibujar todo' : `Dibujar las ${s.panels.length - drawn(s)} que faltan`) : `Dibujar ${s.panels?.length ?? 0} viñetas`}</button>
           <button data-act="export" ${drawn(s) ? '' : 'disabled'}>⬇ MP4 vertical</button>
           ${s.fx ? '' : '<button data-act="fx">✨ Efectos y sonido</button>'}
-          <button data-act="cover" ${drawn(s) ? '' : 'disabled title="Primero dibuja alguna viñeta (el personaje sale de ellas)"'}>🖼 ${s.cover ? 'Rehacer miniatura' : 'Hacer miniatura'}</button>
+          ${s.cover ? '' : `<button data-act="cover" ${drawn(s) ? '' : 'disabled title="Primero dibuja alguna viñeta (el personaje sale de ellas)"'}>🖼 Hacer miniatura</button>`}
           <button data-act="copy">📋 Texto para TikTok</button>
         </div>
-        ${s.cover ? `<div class="row wrap hint">🖼 «${esc(s.cover.text)}» ·
-          <a href="${esc(s.cover.full)}" download="${esc(ctx.slug(s.title))}-miniatura-4k.jpg">⬇ Miniatura 4K</a> ·
-          <a href="${esc(s.cover.small)}" download="${esc(ctx.slug(s.title))}-miniatura.jpg">⬇ Miniatura YouTube</a></div>` : ''}
+        ${s.cover ? `<div class="thumb-box">
+          <img src="${esc(s.cover.small)}" alt="" />
+          <div class="info">
+            <b>Miniatura</b><small>«${esc(s.cover.text)}» · también es el primer fotograma del MP4</small>
+            <div class="group">
+              <a class="btn" href="${esc(s.cover.full)}" download="${esc(ctx.slug(s.title))}-miniatura-4k.jpg" title="2160×3840">⬇ 4K</a>
+              <a class="btn" href="${esc(s.cover.small)}" download="${esc(ctx.slug(s.title))}-miniatura.jpg" title="1080×1920, menos de 2 MB (para subir a YouTube)">⬇ YouTube</a>
+              <button data-act="cover" title="Texto y dibujo nuevos">🖼 Rehacer</button>
+            </div>
+          </div>
+        </div>` : ''}
       </div>
     </div>`).join('');
-  project.shorts.forEach((s, n) => paint(n, 0.6)); // a 0,6 s ya se ve el gancho
+  project.shorts.forEach((s, n) => paint(n, idleAt(n)));
   ctx.$('#pod-shorts').onclick = onClick;
   ctx.$('#pod-shorts').oninput = onInput;
+}
+
+// en reposo: la miniatura si la hay (es el primer fotograma); si no, a 0,6 s ya se ve el gancho
+const idleAt = (n) => pos[n] || (project.shorts[n].cover ? 0 : 0.6);
+const card = (n) => ctx.$(`.pod-short[data-n="${n}"]`);
+function showTime(n, t) {
+  const c = card(n);
+  if (!c) return;
+  c.querySelector('.seek').value = t;
+  c.querySelector('.tm').textContent = `${fmt(t)} / ${fmt(project.shorts[n].end - project.shorts[n].start)}`;
 }
 
 async function paint(n, t) {
@@ -73,42 +105,71 @@ async function paint(n, t) {
   drawComic(canvas.getContext('2d'), s, t, { credit: project.source?.channel });
 }
 
+/** Para el que suena; recuerda dónde iba (pausa). */
 function stop() {
   if (!playing) return;
-  playing.src.onended = null;
-  try { playing.src.stop(); } catch {}
-  cancelAnimationFrame(playing.raf);
-  ctx?.$(`.pod-short[data-n="${playing.n}"] .big-play`)?.classList.remove('hide');
+  const { n, src, t0, raf } = playing;
+  pos[n] = Math.max(0, ac.currentTime - t0);
+  src.onended = null;
+  try { src.stop(); } catch {}
+  cancelAnimationFrame(raf);
+  card(n)?.querySelector('.big-play')?.classList.remove('hide');
+  const pp = card(n)?.querySelector('.pp');
+  if (pp) pp.textContent = '▶';
   playing = null;
 }
 
+const applyVolume = () => { if (master) master.gain.value = muted ? 0 : vol; };
+
 // suena la mezcla completa (voz + música + ambientes + golpe); el reloj del audio manda sobre la imagen
-async function play(n) {
-  if (playing?.n === n) return stop();
+async function play(n, from = pos[n] ?? 0) {
   stop();
   const s = project.shorts[n];
-  const btn = ctx.$(`.pod-short[data-n="${n}"] .big-play`);
-  btn.classList.add('hide');
+  const c = card(n);
+  c.querySelector('.big-play').classList.add('hide');
+  c.querySelector('.pp').textContent = '⏸';
   try {
     ac ??= new AudioContext();
+    if (!master) { master = ac.createGain(); master.connect(ac.destination); applyVolume(); }
     await ac.resume();
     const [buf] = await Promise.all([soundtrack(s), preloadShort(s)]);
+    if (from >= buf.duration - 0.1) from = 0;
     const src = ac.createBufferSource();
-    src.buffer = buf; src.connect(ac.destination);
-    const c2 = ctx.$(`.pod-short[data-n="${n}"] canvas`).getContext('2d');
-    const t0 = ac.currentTime + 0.05;
-    playing = { n, src, raf: 0 };
+    src.buffer = buf; src.connect(master);
+    const start = ac.currentTime + 0.05;
+    const c2 = c.querySelector('canvas').getContext('2d');
+    playing = { n, src, t0: start - from, raf: 0 };
     const loop = () => {
-      drawComic(c2, s, Math.max(0, ac.currentTime - t0), { credit: project.source?.channel });
-      if (playing?.n === n) playing.raf = requestAnimationFrame(loop);
+      if (playing?.n !== n) return;
+      const t = Math.max(0, ac.currentTime - playing.t0);
+      drawComic(c2, s, t, { credit: project.source?.channel });
+      showTime(n, t);
+      playing.raf = requestAnimationFrame(loop);
     };
-    src.onended = () => { stop(); paint(n, 0.6); };
-    src.start(t0);
+    src.onended = () => { stop(); pos[n] = 0; showTime(n, 0); paint(n, idleAt(n)); };
+    src.start(start, from);
     loop();
-  } catch (e) { ctx.toast(`No se pudo reproducir: ${e.message}`, 'bad'); btn.classList.remove('hide'); stop(); }
+  } catch (e) { ctx.toast(`No se pudo reproducir: ${e.message}`, 'bad'); stop(); }
+}
+
+/** Saltar a t (sigue sonando si ya sonaba). */
+function seek(n, t) {
+  pos[n] = t;
+  if (playing?.n === n) return play(n, t);
+  showTime(n, t);
+  paint(n, t);
 }
 
 function onInput(e) {
+  const n0 = Number(e.target.closest('.pod-short')?.dataset.n);
+  if (e.target.classList.contains('seek')) return seek(n0, Number(e.target.value));
+  if (e.target.classList.contains('vol')) {
+    vol = Number(e.target.value); muted = vol === 0;
+    document.querySelectorAll('.pod-ctrl .vol').forEach((x) => { x.value = vol; });
+    try { localStorage.setItem('comic.vol', vol); localStorage.setItem('comic.muted', muted ? '1' : '0'); } catch {}
+    document.querySelectorAll('.pod-ctrl .mute').forEach((x) => { x.textContent = muted ? '🔇' : '🔊'; });
+    return applyVolume();
+  }
   const card = e.target.closest('.pod-short');
   if (!card || !e.target.dataset.f) return;
   project.shorts[card.dataset.n][e.target.dataset.f] = e.target.value;
@@ -124,7 +185,13 @@ async function onClick(e) {
   const act = e.target.closest('[data-act]')?.dataset.act;
   const panelBtn = e.target.closest('[data-panel]');
   if (panelBtn) return editPanel(n, Number(panelBtn.dataset.panel));
-  if (act === 'play') play(n);
+  if (act === 'play') { if (playing?.n === n) stop(); else play(n); }
+  if (act === 'mute') {
+    muted = !muted;
+    try { localStorage.setItem('comic.muted', muted ? '1' : '0'); } catch {}
+    document.querySelectorAll('.pod-ctrl .mute').forEach((x) => { x.textContent = muted ? '🔇' : '🔊'; });
+    applyVolume();
+  }
   if (act === 'copy') {
     const hashtags = (s.hashtags ?? []).map((h) => `#${h.replace(/^#/, '')}`).join(' ');
     await navigator.clipboard.writeText([s.caption, hashtags, `🎙 Audio: ${project.source?.channel ?? ''} · ${BRAND}`, continuation(project.source, s.start)].filter(Boolean).join('\n\n'));
