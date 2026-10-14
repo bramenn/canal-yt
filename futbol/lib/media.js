@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { readKey, keySource, saveKey } from '../../lib/tts/keys.js';
+import { getSetting, setSetting } from './db.js';
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 const TYPES = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/avif': '.avif', 'video/mp4': '.mp4' };
@@ -17,6 +18,20 @@ const item = ({ image, thumbnail, width, height, title, page }) =>
   ({ url: image, thumb: thumbnail || image, width: Number(width) || 0, height: Number(height) || 0, title: title || '', credit: { source: page || image, site: host(page || image) } });
 
 export const BRAVE_ENV = 'BRAVE_API_KEY';
+// ponytail: tarifa fija del plan de pago por uso de Brave (5 $ / 1000 búsquedas); cambiarla aquí si cambia el plan
+export const BRAVE_PRICE = 5 / 1000;
+// Brave no informa del gasto: cada búsqueda cobrada se cuenta aquí (total y por mes). Las llamadas van en fila: sin carreras.
+async function countBrave() {
+  const month = new Date().toISOString().slice(0, 7);
+  const u = (await getSetting('braveUsage')) ?? { total: 0, months: {} };
+  u.total++; u.months[month] = (u.months[month] ?? 0) + 1;
+  await setSetting('braveUsage', u).catch(() => {});
+}
+export async function braveUsage() {
+  const u = (await getSetting('braveUsage')) ?? { total: 0, months: {} };
+  const month = u.months[new Date().toISOString().slice(0, 7)] ?? 0;
+  return { month, total: u.total, monthCost: month * BRAVE_PRICE, totalCost: u.total * BRAVE_PRICE };
+}
 export const braveStatus = () => ({ configured: !!readKey('brave', BRAVE_ENV), source: keySource('brave', BRAVE_ENV) });
 export const setBraveKey = (key) => saveKey('brave', key);
 
@@ -30,6 +45,7 @@ async function braveOnce(key, q) {
     try {
       const r = await fetch(u, { headers: { 'X-Subscription-Token': key, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
       if (!r.ok) throw Object.assign(new Error(`respondió ${r.status}`), { http: true });
+      await countBrave();
       return (await r.json()).results ?? [];
     } catch (e) {
       if (e.http || i === 3) throw new Error(e.http ? e.message : `sin conexión (${e.cause?.code ?? e.message})`);

@@ -8,7 +8,7 @@ import { existsSync, createReadStream } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { runClaude, enginesStatus, setEngine, sendJSON, readRaw, readBody, sse } from '../lib/claude.js';
 import { systemPrompt, scriptPrompt, VIDEO_SCHEMA, SEGMENT_SCHEMA, splitScript, importPrompt, importSystem, IMPORT_SCHEMA } from './lib/prompts.js';
-import { mediaStore, braveStatus, setBraveKey } from './lib/media.js';
+import { mediaStore, braveStatus, setBraveKey, braveUsage } from './lib/media.js';
 import * as clips from './lib/clips.js';
 import { checkImages } from './lib/watermark.js';
 import { autoClips } from './lib/autoclips.js';
@@ -127,6 +127,14 @@ http.createServer(async (req, res) => {
       return sendJSON(res, 200, await listUsers());
     }
 
+    // gasto en servicios de pago, visible para todos
+    if (p === '/api/usage') {
+      const [eleven, brave] = await Promise.all([
+        tts.provider('elevenlabs').usage().catch((e) => ({ error: e.message })),
+        braveUsage().catch((e) => ({ error: e.message })),
+      ]);
+      return sendJSON(res, 200, { eleven, brave });
+    }
     if (p === '/api/status') {
       return sendJSON(res, 200, { tts: tts.statusAll(), align: await aligner.status(), brave: braveStatus(), ai: await enginesStatus(), capcut: capcutStatus(), creds: credsStatus() });
     }

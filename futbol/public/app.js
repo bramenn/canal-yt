@@ -1035,6 +1035,26 @@ $('#nu-add').onclick = async () => {
   } catch (e) { toast(e.data?.error || e.message, 'bad'); }
 };
 
+// ================= gasto en servicios =================
+const money = (n) => `${n < 10 ? n.toFixed(2) : Math.round(n)} $`;
+async function showSpend() {
+  const u = await getJSON('/api/usage').catch(() => null);
+  if (!u) return;
+  const parts = [];
+  const e = u.eleven;
+  if (e && !e.error) parts.push(`🎙 ElevenLabs ${e.used.toLocaleString('es')} / ${e.limit.toLocaleString('es')} créditos${e.overage ? ` (+${money(e.overage)})` : ''}`);
+  const b = u.brave;
+  if (b && !b.error) parts.push(`🔎 Brave ${money(b.monthCost)} este mes · ${money(b.totalCost)} en total`);
+  if (!parts.length) return;
+  const el = $('#spend');
+  el.textContent = parts.join(' · ');
+  el.title = [
+    e && !e.error && `ElevenLabs (plan ${e.tier}): ${e.used} de ${e.limit} créditos gastados; se renuevan el ${new Date(e.reset * 1000).toLocaleDateString('es')}.`,
+    b && !b.error && `Brave: ${b.month} búsquedas este mes, ${b.total} desde que se cuenta (5 $ por 1000).`,
+  ].filter(Boolean).join('\n');
+  el.hidden = false;
+}
+
 // ================= arranque =================
 // todo a la vez: el servidor está lejos y cada petición en serie suma medio segundo
 const statusReady = refreshStatus();
@@ -1043,5 +1063,6 @@ const opening = hashId && getJSON(`/api/projects/${hashId}`);
 me = await getJSON('/api/me');
 $('#me').textContent = `👤 ${me.username}`;
 $('#admin-only').hidden = !me.isAdmin;
+showSpend();
 if (opening) Promise.all([opening, statusReady]).then(([p]) => openProject(p, hashStep)).catch(showHome);
 else showHome();
