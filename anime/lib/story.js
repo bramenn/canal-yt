@@ -87,3 +87,15 @@ Devuelve:
   }, emit, track);
   return { script: ev.data, cost: ev.cost ?? 0 };
 }
+
+/** Texto de miniatura para un guion que no lo tiene (shorts hechos antes de las miniaturas). */
+export async function thumbText(script, emit, track) {
+  const ev = await claudeStep({
+    prompt: `Short de anime: «${script.title}». Guion: ${script.lines.map((l) => l.text).join(' ')}
+
+Escribe el texto de su miniatura (primer fotograma): "thumb_text" = 2-4 palabras en MAYÚSCULAS que despierten curiosidad o emoción sin contarlo todo y que NO repitan el título (el título da contexto, la miniatura el gancho). "thumb_word" = la palabra de "thumb_text" que va en amarillo.`,
+    schema: { type: 'object', properties: { thumb_text: { type: 'string' }, thumb_word: { type: 'string' } }, required: ['thumb_text', 'thumb_word'] },
+    system: 'Eres experto en miniaturas de YouTube.', model: 'sonnet', effort: 'low', tools: [],
+  }, emit, track);
+  return ev.data;
+}

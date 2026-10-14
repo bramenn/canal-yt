@@ -3,7 +3,8 @@
 // amarillo, turquesa) y el texto en la zona segura (tercio superior, lejos de los botones de abajo y de la derecha).
 // El dibujo lo rehace Codex (image_gen) a partir del mejor primer plano del tráiler; el texto se pone aquí a 4K
 // (los modelos de imagen aún escriben mal). Si Codex no puede (p. ej. personajes con derechos), se usa el fotograma.
-import { writeFile, copyFile } from 'node:fs/promises';
+import { writeFile, copyFile, rename } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../lib/ytdlp.js';
@@ -11,6 +12,9 @@ import { generateImage } from '../../lib/codeximage.js';
 
 const FONTS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fonts');
 const W4 = 2160, H4 = 3840;
+// ampliación con IA para anime (Real-ESRGAN, necesita Vulkan/GPU): líneas nítidas a 4K en vez de estiradas.
+// Sin él (p. ej. en el servidor) se amplía con lanczos.
+const ESRGAN = process.env.REALESRGAN_BIN || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '.tools/realesrgan/realesrgan-ncnn-vulkan');
 const ff = (args) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], 600000);
 const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ]/g, '');
 
@@ -67,14 +71,28 @@ export async function makeThumb({ script, anime, scenes, dir }, log, signal) {
     art = path.join(dir, `thumb-art${path.extname(gen) || '.png'}`);
     await copyFile(gen, art);
   } catch (e) { log(`⚠️ Codex no pudo (${e.message.slice(0, 120)}): uso el fotograma del tráiler`); }
+  if (existsSync(ESRGAN)) {
+    const up = path.join(dir, 'thumb-art-x4.png');
+    try { await run(ESRGAN, ['-i', art, '-o', up, '-n', 'realesrgan-x4plus-anime'], 600000); art = up; log('🔍 Miniatura ampliada ×4 con Real-ESRGAN'); }
+    catch (e) { log(`⚠️ Real-ESRGAN no pudo (${e.message.slice(0, 80)}): amplío con lanczos`); }
+  }
   // fondo a 4K: cubrir 9:16, más color y contraste, enfoque y bordes oscuros que llevan la vista al centro
   const bg = path.join(dir, 'thumb-bg.png');
-  await ff(['-i', art, '-vf', `scale=${W4}:${H4}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W4}:${H4},eq=saturation=1.25:contrast=1.08,unsharp=5:5:0.8,vignette=PI/5`, '-frames:v', '1', bg]);
+  await ff(['-i', art, '-vf', `scale=${W4}:${H4}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W4}:${H4},eq=saturation=1.25:contrast=1.08,unsharp=5:5:${art.endsWith('-x4.png') ? 0.3 : 0.8},vignette=PI/5`, '-frames:v', '1', bg]);
   const assFile = path.join(dir, 'thumb.ass');
   await writeFile(assFile, ass(script.thumb_text || script.title, script.thumb_word));
   const full = path.join(dir, 'thumb-4k.jpg');
-  await ff(['-loop', '1', '-t', '1', '-i', bg, '-vf', `subtitles=${assFile}:fontsdir=${FONTS}`, '-frames:v', '1', '-q:v', '2', full]);
+  // máxima calidad JPEG (q 1) y sin submuestreo de color (4:4:4): bordes del texto limpios
+  await ff(['-loop', '1', '-t', '1', '-i', bg, '-vf', `subtitles=${assFile}:fontsdir=${FONTS},format=yuvj444p`, '-frames:v', '1', '-q:v', '1', full]);
   const small = path.join(dir, 'thumb.jpg');
   await ff(['-i', full, '-vf', 'scale=1080:1920:flags=lanczos', '-q:v', '3', small]);
   return { full, small };
+}
+
+/** Pone la miniatura como primer fotograma (0,3 s) de un vídeo ya montado: recodifica la imagen, copia el audio. */
+export async function firstFrame(video, thumb) {
+  const tmp = video.replace(/\.mp4$/, '.tmp.mp4');
+  await ff(['-i', video, '-loop', '1', '-t', '1', '-i', thumb, '-filter_complex', "[1:v]scale=1080:1920[t];[0:v][t]overlay=enable='lt(t,0.3)':eof_action=pass[o]",
+    '-map', '[o]', '-map', '0:a', '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'copy', '-movflags', '+faststart', tmp]);
+  await rename(tmp, video);
 }

@@ -105,6 +105,7 @@ function render() {
           <a class="btn" href="${esc(p.video)}" download="${esc(slug(p.script?.title ?? p.id))}.mp4">⬇ MP4</a>
           ${p.thumb ? `<a class="btn" href="${esc(p.thumb)}" download="${esc(slug(p.script?.title ?? p.id))}-miniatura-4k.jpg" title="2160×3840">⬇ Miniatura 4K</a>
           <a class="btn" href="${esc(p.thumbSmall)}" download="${esc(slug(p.script?.title ?? p.id))}-miniatura.jpg" title="1080×1920, menos de 2 MB (para subir a YouTube)">⬇ Miniatura YouTube</a>` : ''}
+          <button data-act="thumb">🖼 ${p.thumb ? 'Rehacer miniatura' : 'Hacer miniatura'}</button>
           <button data-act="copy">📋 Título y texto</button>
           <button data-act="remake">🔄 Rehacer</button>
           <button data-act="del" class="danger">🗑</button>
@@ -120,6 +121,7 @@ $('#shorts').onclick = async (e) => {
   if (!card || !act) return;
   const p = list.find((x) => x.id === card.dataset.id);
   if (act === 'copy') { await navigator.clipboard.writeText(tiktokText(p)); toast('Título, descripción y hashtags copiados', 'ok'); }
+  if (act === 'thumb') runTask(`Miniatura de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/thumb/${p.id}`, {}); return 'Miniatura lista: ya es el primer fotograma del vídeo'; });
   if (act === 'remake') runTask(`Rehaciendo «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remake/${p.id}`, { voice: $('#voice-pick').value }); return 'Short rehecho'; });
   if (act === 'del') {
     if (!(await ask({ title: '¿Borrar este short?', text: 'Se mueve a la papelera (recuperable desde la base de datos).', ok: 'Borrar', danger: true }))) return;

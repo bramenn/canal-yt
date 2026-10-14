@@ -11,7 +11,9 @@ import { sendJSON, readBody, sse, setEngine } from '../lib/claude.js';
 import { migrate, listProjects, getProject, saveProject, deleteProject, getSetting } from '../lib/db.js';
 import { countUsers } from '../lib/auth.js';
 import { gate, serveFrom } from '../lib/web.js';
-import { findStories } from './lib/story.js';
+import { findStories, thumbText } from './lib/story.js';
+import { makeThumb, firstFrame } from './lib/thumb.js';
+import { readdir, readFile } from 'node:fs/promises';
 import { makeShort } from './lib/make.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -89,6 +91,27 @@ http.createServer(async (req, res) => {
       if (!old) return sendJSON(res, 404, { error: 'No existe' });
       const { voice } = await readBody(req);
       return task(res, (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id));
+    }
+    // ---- miniatura de un short ya hecho (sin rehacer voz ni montaje): también pasa a ser su primer fotograma ----
+    if ((m = p.match(/^\/api\/thumb\/([\w-]+)$/)) && req.method === 'POST') {
+      const pj = await getProject(safeId(m[1]), TABLE);
+      if (!pj) return sendJSON(res, 404, { error: 'No existe' });
+      return task(res, async (emit, track, signal) => {
+        const log = (text) => emit({ type: 'log', text });
+        const dir = path.join(MEDIA, pj.id);
+        if (!pj.script.thumb_text) Object.assign(pj.script, await thumbText(pj.script, emit, track));
+        log(`🖼 Texto de la miniatura: «${pj.script.thumb_text}»`);
+        const main = pj.script.lines.find((l) => l.show === 'anime')?.query ?? pj.story.anime;
+        const sf = (await readdir(dir)).find((f) => /^tr-.*\.json$/.test(f));
+        const scenes = sf ? JSON.parse(await readFile(path.join(dir, sf), 'utf8')) : [{ file: path.join(dir, 'short.mp4'), s: 1, e: 3 }];
+        const thumb = await makeThumb({ script: pj.script, anime: main, scenes, dir }, log, signal);
+        log('🎬 Poniéndola como primer fotograma del vídeo…');
+        await firstFrame(path.join(dir, 'short.mp4'), thumb.small);
+        Object.assign(pj, { thumb: `/media/${pj.id}/thumb-4k.jpg`, thumbSmall: `/media/${pj.id}/thumb.jpg` });
+        await saveProject(pj, user.id, TABLE);
+        emit({ type: 'short', project: pj });
+        return { ok: true };
+      });
     }
     if (p.startsWith('/media/')) {
       // vídeos con Range (el navegador pide trozos para poder saltar)
