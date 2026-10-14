@@ -8,7 +8,7 @@ const M = 46;                                   // margen del marco
 const FRAME = { x: M, y: 250, w: CW - 2 * M, h: 1240 };
 const SLIDE = 0.32;                              // entrada de cada viñeta
 const HOOK_SECS = 3.2;
-export const BRAND = '@HistoriasConB';           // marca de agua: el canal donde se publican los shorts
+export const BRAND = '@CrimenesPoe';             // marca de agua: el canal donde se publican los shorts
 const BEAT_FULL = 1.8;                           // segundos a pantalla completa en el clímax
 
 const cache = new Map();
