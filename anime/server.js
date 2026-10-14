@@ -32,7 +32,7 @@ if (!(await countUsers())) console.log('\n  ⚠️  No hay usuarios: crea el pri
 
 const safeId = (id) => String(id).replace(/[^a-z0-9_-]/gi, '').slice(0, 80);
 // las dos voces del canal (biblioteca de ElevenLabs): se elige una al crear o rehacer
-const VOICES = { mujer: { id: 'ajOR9IDAaubDK5qtLUqQ', title: 'Mujer' }, hombre: { id: 'id7LQ3n0ft94moeTT1ER', title: 'Hombre' } };
+const VOICES = { mujer: { id: 'ajOR9IDAaubDK5qtLUqQ', title: 'Mujer' }, hombre: { id: 'qRUgOhnxGASxirG4fKjv', title: 'Hombre (David)' } };
 const voiceOf = (key) => VOICES[key] ?? VOICES.hombre;
 
 /** Tarea larga por SSE: result / error / end, cancelable al cerrar la conexión. */
