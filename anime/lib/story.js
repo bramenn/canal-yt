@@ -63,7 +63,7 @@ const SCRIPT_SCHEMA = {
 
 export async function writeScript(story, emit, track) {
   const ev = await claudeStep({
-    prompt: `Escribe el guion de un short vertical de anime (voz en off en español latino, 45-55 segundos, unas 140-160 palabras) al estilo de AniDosis.
+    prompt: `Escribe el guion de un short vertical de anime (voz en off en español latino, 45-55 segundos: 120-140 palabras, ni una más) al estilo de AniDosis.
 
 Historia: ${story.anime} — ${story.angle}
 Datos (no inventes nada más): ${story.facts}

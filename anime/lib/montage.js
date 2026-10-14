@@ -18,7 +18,7 @@ const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error',
 const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ]/g, '');
 
 // ---------- fuentes ----------
-/** Escenas de los tráileres/PV del anime en YouTube (hasta 2 vídeos, una vez por anime y proyecto): [{ file, s, e }]. */
+/** Escenas limpias de los tráileres/PV del anime en YouTube (vídeos hasta tener ~20, máx. 4; una vez por anime y proyecto). */
 async function trailer(query, dir, log) {
   const slug = norm(query).slice(0, 40) || 'anime';
   const scenesFile = path.join(dir, `tr-${slug}.json`);
@@ -26,29 +26,28 @@ async function trailer(query, dir, log) {
   // primero el PV japonés (sin subtítulos); anuncios nuevos aún no tienen tráiler: opening o cada parte del nombre
   const parts = String(query).split(/\s+(?:x|×|&|y)\s+|:\s*/i).filter((x) => x.trim() && x !== query);
   const tries = [`${query} PV`, `${query} anime trailer`, `${query} anime opening`, ...parts.map((x) => `${x} anime PV`)];
-  const got = [], seen = new Set();
-  let err = null;
+  const scenes = [], seen = new Set();
+  let videos = 0, err = null, first = null;
   // YouTube corta a ratos (403): otro formato y, si no, el siguiente vídeo
   find: for (const q of tries) {
-    for (const cand of (await search(q, 8).catch(() => [])).filter((x) => x.duration >= 30 && x.duration <= 600 && !seen.has(x.id)).slice(0, 3)) {
+    for (const cand of (await search(q, 8).catch(() => [])).filter((x) => x.duration >= 30 && x.duration <= 600 && !seen.has(x.id)).slice(0, 2)) {
       seen.add(cand.id);
-      const file = path.join(dir, `tr-${slug}-${got.length}.mp4`);
+      const file = path.join(dir, `tr-${slug}-${videos}.mp4`);
       for (const fmt of ['bv*[height<=1080][vcodec^=avc1]/bv*[height<=1080]', 'bv*[height<=1080]/b']) {
         try {
           await ytdlp(['-q', '-f', fmt, '--merge-output-format', 'mp4', '-o', file, `https://www.youtube.com/watch?v=${cand.id}`], 300000);
-          log(`🎞 Tráiler de «${query}»: ${cand.title} (${cand.channel})`);
-          got.push({ file, dur: cand.duration });
-          if (got.length === 2) break find;
-          break;
-        } catch (e) { err = e; }
+        } catch (e) { err = e; continue; }
+        log(`🎞 Tráiler de «${query}»: ${cand.title} (${cand.channel})`);
+        videos++;
+        first ??= { file, dur: cand.duration };
+        scenes.push(...await withoutText(file, await scenesOf(file, cand.duration), dir, log).catch((e) => { log(`⚠️ Sin revisar escenas: ${e.message.slice(0, 120)}`); return []; }));
+        break;
       }
+      if (scenes.length >= 20 || videos >= 4) break find;
     }
-    if (got.length) break; // con un vídeo de una búsqueda buena basta si no hay un segundo
   }
-  if (!got.length) throw new Error(`No encuentro tráiler de «${query}»${err ? ` (${err.message.slice(0, 80)})` : ''}`);
-  const scenes = [];
-  for (const { file, dur } of got) scenes.push(...await withoutText(file, await scenesOf(file, dur), dir, log).catch((e) => { log(`⚠️ Sin revisar escenas: ${e.message.slice(0, 120)}`); return []; }));
-  if (!scenes.length) scenes.push({ file: got[0].file, s: got[0].dur * 0.15, e: got[0].dur * 0.85 });
+  if (!first) throw new Error(`No encuentro tráiler de «${query}»${err ? ` (${err.message.slice(0, 80)})` : ''}`);
+  if (!scenes.length) scenes.push({ file: first.file, s: first.dur * 0.15, e: first.dur * 0.85 });
   // alternando vídeos: más variedad seguida
   scenes.sort((a, b) => a.s - b.s);
   await writeFile(scenesFile, JSON.stringify(scenes));
@@ -71,7 +70,7 @@ async function scenesOf(file, dur) {
 async function withoutText(file, scenes, dir, log) {
   const pick = scenes.slice(0, 64);
   const tag = path.join(dir, `grid-${path.basename(file, '.mp4')}`);
-  if (!pick.length) return [];
+  if (!pick.length) { log('👀 Escenas del tráiler: ninguna útil'); return []; }
   for (const [i, x] of pick.entries()) {
     await ff(['-ss', String((x.s + x.e) / 2), '-i', file, '-frames:v', '1', '-vf', `scale=240:135:force_original_aspect_ratio=increase,crop=240:135,drawtext=text='${i + 1}':x=6:y=4:fontsize=30:fontcolor=yellow:box=1:boxcolor=black@0.75:boxborderw=4,format=yuvj420p`, `${tag}-${String(i).padStart(2, '0')}.jpg`]);
   }
