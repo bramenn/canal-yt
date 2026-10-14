@@ -65,7 +65,7 @@ npm run anime      # → http://localhost:4324 (mismos usuarios y Postgres; tabl
 
 - **Historias** · la IA busca en la web las noticias y curiosidades de anime con más gancho de los últimos días, sin repetir las ya hechas (`anime/lib/story.js`).
 - **Guion** · fórmula AniDosis: gancho, «el problema es que…», datos y remate; título con MAYÚSCULAS, palabras a resaltar en amarillo/rojo y qué se ve en cada frase.
-- **Voz** · tu primera voz favorita de ElevenLabs, alineada palabra a palabra (Whisper).
+- **Voz** · a elegir entre las dos voces del canal (hombre o mujer, de la biblioteca de ElevenLabs), alineada palabra a palabra (Whisper).
 - **Montaje** · ffmpeg en el servidor (`anime/lib/montage.js`): cortes de ~2,6 s sobre escenas del tráiler/PV oficial (sin negros, logos ni créditos), recorte 9:16, imágenes de Brave con desplazamiento, subtítulos ASS de 1-2 palabras en Anton (`anime/fonts`, OFL) y la marca del canal.
 ## Cómo funciona el motor
 - `server.js` lanza `claude -p --output-format stream-json --json-schema …` con un prompt de sistema construido desde `style/estilo.md`. El progreso llega en vivo al panel del motor.

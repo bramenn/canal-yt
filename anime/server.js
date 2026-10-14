@@ -21,7 +21,6 @@ const PROJECTS = process.env.PROJECTS_DIR;
 const MEDIA = path.join(PROJECTS, 'media');
 const tts = await import('../lib/tts/index.js');
 const aligner = await import('../lib/align/index.js');
-const { listLatamVoices } = await import('../lib/tts/elevenlabs.js');
 const PORT = Number(process.env.PORT || 4324);
 const TABLE = 'animes';
 await mkdir(MEDIA, { recursive: true });
@@ -30,13 +29,9 @@ if (!process.env.AI_ENGINE) setEngine(await getSetting('engine'));
 if (!(await countUsers())) console.log('\n  ⚠️  No hay usuarios: crea el primero con  npm run user -- add <usuario> --admin\n');
 
 const safeId = (id) => String(id).replace(/[^a-z0-9_-]/gi, '').slice(0, 80);
-/** La voz: tu primera voz favorita de ElevenLabs (las de tu cuenta). */
-async function voice() {
-  const items = (await listLatamVoices({})).items;
-  const v = items.find((x) => x.favorite) ?? items[0];
-  if (!v) throw new Error('No hay voces de ElevenLabs: revisa la clave en Estudio Fútbol ⚙');
-  return v;
-}
+// las dos voces del canal (biblioteca de ElevenLabs): se elige una al crear o rehacer
+const VOICES = { mujer: { id: 'ajOR9IDAaubDK5qtLUqQ', title: 'Mujer' }, hombre: { id: 'id7LQ3n0ft94moeTT1ER', title: 'Hombre' } };
+const voiceOf = (key) => VOICES[key] ?? VOICES.hombre;
 
 /** Tarea larga por SSE: result / error / end, cancelable al cerrar la conexión. */
 const task = (res, run) => sse(res, (emit) => {
@@ -51,8 +46,9 @@ const task = (res, run) => sse(res, (emit) => {
 });
 
 /** Hace un short y lo guarda; si falla, lo cuenta y sigue (en automático no se para todo por uno). */
-async function makeAndSave(story, user, emit, track, signal, id = Date.now().toString(36)) {
-  const v = await voice();
+async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date.now().toString(36)) {
+  const v = voiceOf(voiceKey);
+  emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
   const p = await makeShort({ id, story, voiceId: v.id }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
   p.voice.title = v.title;
   await saveProject(p, user.id, TABLE);
@@ -70,7 +66,7 @@ http.createServer(async (req, res) => {
 
     // ---- automático: historias del día → un short por historia ----
     if (p === '/api/auto' && req.method === 'POST') {
-      const { count = 3 } = await readBody(req);
+      const { count = 3, voice } = await readBody(req);
       return task(res, async (emit, track, signal) => {
         const log = (text) => emit({ type: 'log', text });
         const avoid = (await listProjects(TABLE)).map((x) => `${x.story?.anime}: ${x.story?.angle}`);
@@ -81,7 +77,7 @@ http.createServer(async (req, res) => {
         for (const [i, story] of stories.entries()) {
           if (signal.aborted) break;
           log(`━━ Short ${i + 1} de ${stories.length}: ${story.anime}`);
-          try { cost += (await makeAndSave(story, user, emit, track, signal, `${Date.now().toString(36)}${i}`)).cost; ok++; }
+          try { cost += (await makeAndSave(story, voice, user, emit, track, signal, `${Date.now().toString(36)}${i}`)).cost; ok++; }
           catch (e) { log(`⚠️ ${story.anime}: ${e.message.slice(0, 200)}`); }
         }
         return { made: ok, cost };
@@ -91,7 +87,8 @@ http.createServer(async (req, res) => {
     if ((m = p.match(/^\/api\/remake\/([\w-]+)$/)) && req.method === 'POST') {
       const old = await getProject(safeId(m[1]), TABLE);
       if (!old) return sendJSON(res, 404, { error: 'No existe' });
-      return task(res, (emit, track, signal) => makeAndSave(old.story, user, emit, track, signal, old.id));
+      const { voice } = await readBody(req);
+      return task(res, (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id));
     }
     if (p.startsWith('/media/')) {
       // vídeos con Range (el navegador pide trozos para poder saltar)
@@ -112,7 +109,6 @@ http.createServer(async (req, res) => {
     if ((m = p.match(/^\/api\/projects\/([\w-]+)$/)) && req.method === 'DELETE') {
       return (await deleteProject(safeId(m[1]), TABLE)) ? sendJSON(res, 200, { ok: true }) : sendJSON(res, 404, { error: 'No existe' });
     }
-    if (p === '/api/voice') { try { const v = await voice(); return sendJSON(res, 200, { id: v.id, title: v.title }); } catch (e) { return sendJSON(res, 400, { error: e.message }); } }
 
     return serveFrom(req, res, p, { '/shared/': path.join(HERE, '..', 'public/js'), '/': path.join(HERE, 'public') });
   } catch (err) {

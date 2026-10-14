@@ -100,7 +100,7 @@ function render() {
       <video src="${esc(p.video)}?v=${p.updated ?? ''}" controls preload="metadata" playsinline></video>
       <div class="body">
         <div class="title">${esc(p.script?.title)}</div>
-        <div class="hint">${esc(p.story?.anime)} · ${esc(p.story?.angle)}</div>
+        <div class="hint">${esc(p.story?.anime)} · ${esc(p.story?.angle)}${p.voice?.title ? ` · 🎙 ${esc(p.voice.title)}` : ''}</div>
         <div class="row wrap">
           <a class="btn" href="${esc(p.video)}" download="${esc(slug(p.script?.title ?? p.id))}.mp4">⬇ MP4</a>
           <button data-act="copy">📋 Título y texto</button>
@@ -118,7 +118,7 @@ $('#shorts').onclick = async (e) => {
   if (!card || !act) return;
   const p = list.find((x) => x.id === card.dataset.id);
   if (act === 'copy') { await navigator.clipboard.writeText(tiktokText(p)); toast('Título, descripción y hashtags copiados', 'ok'); }
-  if (act === 'remake') runTask(`Rehaciendo «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remake/${p.id}`, {}); return 'Short rehecho'; });
+  if (act === 'remake') runTask(`Rehaciendo «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remake/${p.id}`, { voice: $('#voice-pick').value }); return 'Short rehecho'; });
   if (act === 'del') {
     if (!(await ask({ title: '¿Borrar este short?', text: 'Se mueve a la papelera (recuperable desde la base de datos).', ok: 'Borrar', danger: true }))) return;
     await fetch(`/api/projects/${p.id}`, { method: 'DELETE' });
@@ -131,7 +131,7 @@ $('#auto').onclick = () => {
   const count = Number($('#count').value);
   runTask(`Creando ${count} short${count > 1 ? 's' : ''} de anime`, async (ui) => {
     ui.step('Buscar historias → guion → voz → tráileres → montaje');
-    const ev = await streamTo(ui, '/api/auto', { count });
+    const ev = await streamTo(ui, '/api/auto', { count, voice: $('#voice-pick').value });
     return `${ev.data.made} short${ev.data.made === 1 ? '' : 's'} listo${ev.data.made === 1 ? '' : 's'}`;
   });
 };
@@ -143,4 +143,6 @@ const [me, shorts] = await Promise.all([getJSON('/api/me'), getJSON('/api/projec
 $('#me').textContent = `👤 ${me.username}`;
 list = shorts;
 render();
-getJSON('/api/voice').then((v) => { $('#voice').textContent = `🎙 ${v.title.split(' - ')[0]}`; }).catch(() => {});
+// la última voz elegida se recuerda en este navegador
+try { $('#voice-pick').value = localStorage.getItem('anime.voice') || 'hombre'; } catch {}
+$('#voice-pick').onchange = (e) => { try { localStorage.setItem('anime.voice', e.target.value); } catch {} };
