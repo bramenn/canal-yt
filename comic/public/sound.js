@@ -48,7 +48,7 @@ function music(ac, len, beat, out) {
     o.connect(lp); o.start(0); o.stop(len + 0.5);
   }
   // un latido grave que se acelera en los 8 s antes del clímax
-  if (beat != null) for (let t = Math.max(0.5, beat - 8); t < beat - 0.3;) { thump(ac, t, 0.22, out); t += 1.1 - 0.6 * ((t - (beat - 8)) / 8); }
+  if (beat != null) for (let t = Math.max(0.5, beat - 8); t < beat - 0.3;) { thump(ac, t, 0.14, out); t += 1.1 - 0.6 * ((t - (beat - 8)) / 8); }
 }
 
 function thump(ac, t, level, out) {
@@ -63,14 +63,14 @@ function impact(ac, beat, nb, out) {
   const rise = 1.1;
   const bp = filter(ac, 'bandpass', 300, 1.2);
   bp.frequency.setValueAtTime(300, beat - rise); bp.frequency.exponentialRampToValueAtTime(3500, beat);
-  const g = ac.createGain(); g.gain.setValueAtTime(0, beat - rise); g.gain.linearRampToValueAtTime(0.12, beat - 0.02); g.gain.linearRampToValueAtTime(0, beat + 0.05);
+  const g = ac.createGain(); g.gain.setValueAtTime(0, beat - rise); g.gain.linearRampToValueAtTime(0.07, beat - 0.02); g.gain.linearRampToValueAtTime(0, beat + 0.05);
   noise(ac, nb, beat - rise, beat + 0.1, bp); bp.connect(g).connect(out);
   const o = ac.createOscillator(); o.type = 'sine';
   o.frequency.setValueAtTime(95, beat); o.frequency.exponentialRampToValueAtTime(32, beat + 0.9);
-  const og = ac.createGain(); og.gain.setValueAtTime(0.42, beat); og.gain.exponentialRampToValueAtTime(0.001, beat + 1.4);
+  const og = ac.createGain(); og.gain.setValueAtTime(0.2, beat); og.gain.exponentialRampToValueAtTime(0.001, beat + 1.4);
   o.connect(og).connect(out); o.start(beat); o.stop(beat + 1.5);
   const lp = filter(ac, 'lowpass', 2200);
-  const ng = ac.createGain(); ng.gain.setValueAtTime(0.22, beat); ng.gain.exponentialRampToValueAtTime(0.001, beat + 0.35);
+  const ng = ac.createGain(); ng.gain.setValueAtTime(0.1, beat); ng.gain.exponentialRampToValueAtTime(0.001, beat + 0.35);
   noise(ac, nb, beat, beat + 0.4, lp); lp.connect(ng).connect(out);
 }
 
@@ -101,7 +101,7 @@ function ambient(ac, kind, t0, t1, nb, out) {
     o.connect(lp).connect(envGain(ac, t0, t1, 0.02, 1)).connect(out);
     o.start(t0); lfo.start(t0); o.stop(t1); lfo.stop(t1); return;
   }
-  if (kind === 'latido') for (let t = t0 + 0.2; t < t1 - 0.3; t += 0.95) { thump(ac, t, 0.18, out); thump(ac, t + 0.24, 0.12, out); }
+  if (kind === 'latido') for (let t = t0 + 0.2; t < t1 - 0.3; t += 0.95) { thump(ac, t, 0.1, out); thump(ac, t + 0.24, 0.07, out); }
 }
 
 /** AudioBuffer con la mezcla completa del short (se guarda en caché mientras no cambien la voz ni los efectos). */
