@@ -95,18 +95,32 @@ const streamTo = (ui, url, body) => stream(url, body, (e) => {
 // ================= shorts =================
 const nf = (n) => (n == null ? '–' : n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e4 ? `${Math.round(n / 1e3)} mil` : n.toLocaleString('es'));
 const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : `hace ${Math.round(m / 1440)} d`; };
-/** Cifras por plataforma: 👁 ❤ 💬, enlace y lo que subieron las vistas desde la lectura anterior. */
+// logos de las redes (Simple Icons, CC0) e iconos de las cifras
+const svg = (d, cls = '') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+const LOGO = {
+  youtube: svg('M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z', 'logo yt'),
+  tiktok: svg('M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z', 'logo tt'),
+  facebook: svg('M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z', 'logo fb'),
+};
+const ICON = {
+  views: svg('M12 5C6.5 5 2.3 8.6 1 12c1.3 3.4 5.5 7 11 7s9.7-3.6 11-7c-1.3-3.4-5.5-7-11-7Zm0 11.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9Zm0-2.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z', 'ic'),
+  likes: svg('M12 21s-7.5-4.6-9.6-9.2C.9 8.5 3 4.5 6.9 4.5c2.1 0 3.7 1.2 5.1 3 1.4-1.8 3-3 5.1-3 3.9 0 6 4 4.5 7.3C19.5 16.4 12 21 12 21Z', 'ic'),
+  comments: svg('M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z', 'ic'),
+};
+/** Cifras por plataforma: logo, vistas (y lo que subieron desde la lectura anterior), likes y comentarios. */
 function statsBox(p) {
   const s = p.stats;
   if (!s) return '';
   const prev = s.history?.at(-2);
-  const row = (key, short, icon, name) => {
+  const row = (key, short, name) => {
     const x = s[key];
-    if (!x) return `<div class="stat off">${icon} ${name} <small>sin publicar</small></div>`;
+    if (!x) return `<div class="stat off">${LOGO[key]}<span>Sin publicar en ${name}</span></div>`;
     const d = prev?.[short] != null && x.views != null ? x.views - prev[short] : 0;
-    return `<a class="stat" href="${esc(x.url)}" target="_blank" rel="noopener" title="Abrir en ${name}">${icon} <b>${nf(x.views)}</b>${d > 0 ? `<em>+${nf(d)}</em>` : ''} <span>❤ ${nf(x.likes)}</span> <span>💬 ${nf(x.comments)}</span></a>`;
+    const part = (k) => (x[k] == null ? '' : `<span class="n">${ICON[k]}${nf(x[k])}</span>`);
+    return `<a class="stat" href="${esc(x.url)}" target="_blank" rel="noopener" title="Abrir en ${name}">${LOGO[key]}
+      <span class="n main">${ICON.views}<b>${nf(x.views)}</b>${d > 0 ? `<em>+${nf(d)}</em>` : ''}</span>${part('likes')}${part('comments')}</a>`;
   };
-  return `<div class="stats">${row('youtube', 'yt', '▶️', 'YouTube')}${row('tiktok', 'tt', '🎵', 'TikTok')}${row('facebook', 'fb', '📘', 'Facebook')}
+  return `<div class="stats">${row('youtube', 'yt', 'YouTube')}${row('tiktok', 'tt', 'TikTok')}${row('facebook', 'fb', 'Facebook')}
     <small class="hint">Actualizado ${ago(s.at)}</small></div>`;
 }
 /** Bloque de la miniatura: vista pequeña, su texto y descargar 4K / YouTube / rehacer. */
