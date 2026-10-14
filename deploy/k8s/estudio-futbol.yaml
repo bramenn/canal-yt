@@ -76,12 +76,6 @@ spec:
     metadata: { labels: { app: estudio-futbol } }
     spec:
       imagePullSecrets: [{ name: ghcr-pull }]
-      affinity:
-        nodeAffinity:
-          # Whisper, rembg y la exportación usan bastante memoria: mejor el nodo con más
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 50
-              preference: { matchExpressions: [{ key: kubernetes.io/hostname, operator: In, values: [mumen-rider] }] }
       initContainers:
         # local-path no aplica fsGroup: las carpetas se preparan para el usuario "node" (1000) de la imagen
         - name: permisos

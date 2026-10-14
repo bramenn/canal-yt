@@ -313,3 +313,4 @@ dialog::backdrop { background: rgba(0, 0, 0, .65); backdrop-filter: blur(2px); }
   .top { gap: 8px; padding: 10px 12px; }
   .steps button { padding: 4px; }
 }
+@media (max-width: 900px) { #spend { display: none; } }

@@ -5,8 +5,8 @@ FROM node:22-bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core python3 python3-venv ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-# búsqueda de imágenes (ddgs), clips de YouTube (yt-dlp), recorte del jugador para miniaturas (rembg) y alineación de la voz (faster-whisper)
-RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir ddgs faster-whisper numpy yt-dlp "rembg[cpu]"
+# clips de YouTube (yt-dlp), recorte del jugador para miniaturas (rembg) y alineación de la voz (faster-whisper)
+RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir faster-whisper numpy yt-dlp "rembg[cpu]"
 # motores de IA: Claude Code y, de respaldo, Codex CLI
 RUN npm install -g @anthropic-ai/claude-code @openai/codex && npm cache clean --force
 

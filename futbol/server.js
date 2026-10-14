@@ -8,7 +8,7 @@ import { existsSync, createReadStream } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { runClaude, enginesStatus, setEngine, sendJSON, readRaw, readBody, sse } from '../lib/claude.js';
 import { systemPrompt, scriptPrompt, VIDEO_SCHEMA, SEGMENT_SCHEMA, splitScript, importPrompt, importSystem, IMPORT_SCHEMA } from './lib/prompts.js';
-import { mediaStore, braveStatus, setBraveKey } from './lib/media.js';
+import { mediaStore, braveStatus, setBraveKey, braveUsage } from './lib/media.js';
 import * as clips from './lib/clips.js';
 import { checkImages } from './lib/watermark.js';
 import { autoClips } from './lib/autoclips.js';
@@ -65,10 +65,13 @@ async function listProjects() {
   return out.sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0));
 }
 
-async function serveStatic(res, file) {
+async function serveStatic(req, res, file) {
   const st = await stat(file).catch(() => null);
   if (!st?.isFile()) return sendJSON(res, 404, { error: 'not found' });
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+  // el navegador guarda la copia y pregunta si cambió: «304» sin cuerpo si sigue igual
+  const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+  if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' }); return res.end(); }
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache', ETag: etag });
   res.end(await readFile(file));
 }
 
@@ -86,8 +89,8 @@ http.createServer(async (req, res) => {
   try {
     // ---- login (lo único accesible sin sesión, junto a la página de login y sus estilos) ----
     if (!sameOrigin(req)) return sendJSON(res, 403, { error: 'Petición de otro origen' });
-    if (p === '/login' || p === '/login.html') return serveStatic(res, path.join(HERE, 'public', 'login.html'));
-    if (p === '/app.css' || p === '/favicon.ico') return serveStatic(res, path.join(HERE, 'public', p.slice(1)));
+    if (p === '/login' || p === '/login.html') return serveStatic(req, res, path.join(HERE, 'public', 'login.html'));
+    if (p === '/app.css' || p === '/favicon.ico') return serveStatic(req, res, path.join(HERE, 'public', p.slice(1)));
     if (p === '/api/login' && req.method === 'POST') {
       const b = await readBody(req);
       try {
@@ -131,6 +134,14 @@ http.createServer(async (req, res) => {
       return sendJSON(res, 200, await listUsers());
     }
 
+    // gasto en servicios de pago, visible para todos
+    if (p === '/api/usage') {
+      const [eleven, brave] = await Promise.all([
+        tts.provider('elevenlabs').usage().catch((e) => ({ error: e.message })),
+        braveUsage().catch((e) => ({ error: e.message })),
+      ]);
+      return sendJSON(res, 200, { eleven, brave });
+    }
     if (p === '/api/status') {
       return sendJSON(res, 200, { tts: tts.statusAll(), align: await aligner.status(), brave: braveStatus(), ai: await enginesStatus(), capcut: capcutStatus(), creds: credsStatus() });
     }
@@ -394,7 +405,7 @@ http.createServer(async (req, res) => {
     const base = STATIC[prefix];
     const file = path.normalize(path.join(base, p === '/' ? 'index.html' : decodeURIComponent(p.slice(prefix.length))));
     if (!file.startsWith(base)) return sendJSON(res, 403, { error: 'forbidden' });
-    return serveStatic(res, file);
+    return serveStatic(req, res, file);
   } catch (err) {
     console.error(err);
     if (!res.headersSent) sendJSON(res, 500, { error: err.message });
