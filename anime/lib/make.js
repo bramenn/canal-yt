@@ -2,6 +2,11 @@
 import path from 'node:path';
 import { writeScript } from './story.js';
 import { montage } from './montage.js';
+import { writeCopy } from '../../lib/social.js';
+
+/** De qué va el short, para el texto de publicación. */
+export const copyAbout = (story, script) => `Anime: ${story.anime}. Ángulo: ${story.angle}. Datos: ${story.facts}
+Título en pantalla: «${script.title}». Guion: ${script.lines.map((l) => l.text).join(' ')}`;
 
 /**
  * deps: { tts, aligner, mediaDir } (tts y aligner = lib/tts y lib/align ya cargados con PROJECTS_DIR).
@@ -14,6 +19,7 @@ export async function makeShort({ id, story, voiceId }, { tts, aligner, mediaDir
   const { script, cost: c1 } = await writeScript(story, emit, track);
   cost += c1;
   log(`📝 «${script.title}» · ${script.lines.length} frases`);
+  script.copy = await writeCopy({ about: copyAbout(story, script), brand: '@notianimes', keywordsHint: 'el nombre del anime o del personaje' }, emit, track);
 
   const text = script.lines.map((l) => l.text).join(' ');
   const [seg] = await tts.synthesize({ provider: 'elevenlabs', projectId: id, voiceId, settings: {}, segments: [{ index: 0, spoken: text }] }, log, signal);

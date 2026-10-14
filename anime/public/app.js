@@ -1,6 +1,7 @@
 // Estudio Anime: un botón crea los shorts del día (historias, guion, voz y montaje en el servidor); aquí se ven,
 // se descargan, se copian título y texto, y se rehacen o borran.
 import { stream, getJSON, postJSON } from '/shared/api.js';
+import { copyText } from '/shared/social.js';
 
 // sesión caducada o cerrada en otro sitio: de vuelta al login
 const nativeFetch = window.fetch.bind(window);
@@ -105,7 +106,8 @@ const thumbBox = (small, full, text, name, act) => (small ? `
       </div>
     </div>
   </div>` : `<div class="row"><button data-act="${act}">🖼 Hacer miniatura</button></div>`);
-const tiktokText = (p) => `${p.script.title}\n\n${p.script.description}\n\n${(p.script.hashtags ?? []).map((h) => `#${h.replace(/^#/, '')}`).join(' ')}`;
+// shorts antiguos sin texto por plataforma: título, descripción y hashtags de siempre
+const oldText = (p) => `${p.script.title}\n\n${p.script.description}\n\n${(p.script.hashtags ?? []).map((h) => `#${h.replace(/^#/, '')}`).join(' ')}`;
 
 function render() {
   $('#shorts').innerHTML = list.length ? list.map((p) => `
@@ -116,7 +118,8 @@ function render() {
         <div class="hint">${esc(p.story?.anime)} · ${esc(p.story?.angle)}${p.voice?.title ? ` · 🎙 ${esc(p.voice.title)}` : ''}</div>
         <div class="row wrap">
           <a class="btn primary" href="${esc(p.video)}" download="${esc(slug(p.script?.title ?? p.id))}.mp4">⬇ MP4</a>
-          <button data-act="copy" title="Título, descripción y hashtags">📋 Texto</button>
+          <button data-act="copy-yt" title="Título, descripción con pregunta y hashtags para YouTube Shorts">📋 YouTube</button>
+          <button data-act="copy-tt" title="Texto con palabras clave, pregunta y hashtags para TikTok">📋 TikTok</button>
           <button data-act="remake" title="Guion, voz y montaje nuevos (con la voz elegida arriba)">🔄 Rehacer</button>
           <button data-act="del" class="danger" title="Borrar">🗑</button>
         </div>
@@ -131,7 +134,11 @@ $('#shorts').onclick = async (e) => {
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (!card || !act) return;
   const p = list.find((x) => x.id === card.dataset.id);
-  if (act === 'copy') { await navigator.clipboard.writeText(tiktokText(p)); toast('Título, descripción y hashtags copiados', 'ok'); }
+  if (act === 'copy-yt' || act === 'copy-tt') {
+    const yt = act === 'copy-yt';
+    await navigator.clipboard.writeText(p.script.copy ? copyText(yt ? 'youtube' : 'tiktok', p.script.copy) : oldText(p));
+    toast(`Texto para ${yt ? 'YouTube' : 'TikTok'} copiado`, 'ok');
+  }
   if (act === 'thumb') runTask(`Miniatura de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/thumb/${p.id}`, {}); return 'Miniatura lista: ya es el primer fotograma del vídeo'; });
   if (act === 'remake') runTask(`Rehaciendo «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remake/${p.id}`, { voice: $('#voice-pick').value }); return 'Short rehecho'; });
   if (act === 'del') {

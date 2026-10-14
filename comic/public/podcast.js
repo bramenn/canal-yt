@@ -2,6 +2,7 @@
 // gancho editable, tira de viñetas (editar y redibujar), dibujar con Codex, exportar MP4 y copiar el texto para TikTok.
 import { drawComic, preloadShort, CW, CH, BRAND } from './comic.js';
 import { soundtrack, wavOf } from './sound.js';
+import { copyText } from '/shared/social.js';
 import { exportVideo, canExportFast, downloadUrl } from '/shared/exporter.js';
 
 let ctx = null;          // utilidades de app.js: { $, esc, toast, ask, runTask, streamTo, save, slug }
@@ -66,7 +67,8 @@ function render() {
           <button data-act="export" ${drawn(s) ? '' : 'disabled'}>⬇ MP4 vertical</button>
           ${s.fx ? '' : '<button data-act="fx">✨ Efectos y sonido</button>'}
           ${s.cover ? '' : `<button data-act="cover" ${drawn(s) ? '' : 'disabled title="Primero dibuja alguna viñeta (el personaje sale de ellas)"'}>🖼 Hacer miniatura</button>`}
-          <button data-act="copy">📋 Texto para TikTok</button>
+          <button data-act="copy-yt" title="Título, descripción con pregunta y hashtags para YouTube Shorts">📋 YouTube</button>
+          <button data-act="copy-tt" title="Texto con palabras clave, pregunta y hashtags para TikTok">📋 TikTok</button>
         </div>
         ${s.cover ? `<div class="thumb-box">
           <img src="${esc(s.cover.small)}" alt="" />
@@ -192,10 +194,13 @@ async function onClick(e) {
     document.querySelectorAll('.pod-ctrl .mute').forEach((x) => { x.textContent = muted ? '🔇' : '🔊'; });
     applyVolume();
   }
-  if (act === 'copy') {
+  if (act === 'copy-yt' || act === 'copy-tt') {
+    const yt = act === 'copy-yt';
+    // siempre: crédito del audio original y el episodio completo desde ese punto
+    const credit = [`🎙 Audio: ${project.source?.channel ?? ''} · ${BRAND}`, continuation(project.source, s.start)];
     const hashtags = (s.hashtags ?? []).map((h) => `#${h.replace(/^#/, '')}`).join(' ');
-    await navigator.clipboard.writeText([s.caption, hashtags, `🎙 Audio: ${project.source?.channel ?? ''} · ${BRAND}`, continuation(project.source, s.start)].filter(Boolean).join('\n\n'));
-    ctx.toast('Texto para TikTok copiado', 'ok');
+    await navigator.clipboard.writeText(s.copy ? copyText(yt ? 'youtube' : 'tiktok', s.copy, credit) : [s.caption, hashtags, ...credit].filter(Boolean).join('\n\n'));
+    ctx.toast(`Texto para ${yt ? 'YouTube' : 'TikTok'} copiado`, 'ok');
   }
   if (act === 'draw') {
     const todo = s.panels.map((p, i) => (drawn(s) === s.panels.length || !p.image ? i : -1)).filter((i) => i >= 0);

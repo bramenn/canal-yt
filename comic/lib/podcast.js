@@ -8,6 +8,7 @@ import { mkdir, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claudeStep } from '../../lib/claude.js';
+import { writeCopy } from '../../lib/social.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '..', '..');
@@ -148,6 +149,12 @@ ${panels}`,
   return ev.cost ?? 0;
 }
 
+/** De qué va el short, para el texto de publicación (sin nombres de víctimas). */
+export const copyAbout = (sh, meta) => `Relato real contado por su protagonista en el podcast «${meta.channel}» («${meta.title}»), dibujado como cómic noir con la voz original.
+Fragmento: «${sh.title}». Gancho en pantalla: «${sh.hook}». Por qué engancha: ${sh.why}
+Lo que se cuenta: ${(sh.words ?? []).map((w) => w[0]).join(' ').slice(0, 1500)}
+No uses nombres de víctimas ni palabras explícitas de violencia (en TikTok se penalizan): sugiérelo.`;
+
 /** Palabras de [start, end] con tiempos relativos al inicio del short. */
 function wordsIn(transcript, start, end) {
   return transcript.flatMap((s) => s.w).filter(([, s]) => s >= start - 0.05 && s < end).map(([w, s, e]) => [w, +(s - start).toFixed(2), +(e - start).toFixed(2)]);
@@ -228,6 +235,7 @@ export async function ingest(body, store, emit, track, signal) {
     log(`🖋 Guion del cómic ${n + 1}/${shorts.length}: «${sh.title}»…`);
     cost += await scriptShort(sh, meta, transcript, dir, mediaUrl, n, (e) => { if (!(e.type === 'log' && /^(⚙️|✍️)/.test(e.text))) emit(e); }, track);
     cost += await fxShort(sh, (e) => { if (!(e.type === 'log' && /^(⚙️|✍️)/.test(e.text))) emit(e); }, track);
+    sh.copy = await writeCopy({ about: copyAbout(sh, meta), brand: '@CrimenesPoe', keywordsHint: 'historia real / true crime + el tema concreto (infidelidad, cárcel, perdón…)' }, () => {}, track);
     log(`   ${sh.panels.length} viñetas · clímax a los ${sh.fx.beat.toFixed(1)} s`);
   }
   delete meta.audioFile;
