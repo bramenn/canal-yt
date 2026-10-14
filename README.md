@@ -65,6 +65,7 @@ npm run anime      # → http://localhost:4324 (mismos usuarios y Postgres; tabl
 ```
 
 - **Historias** · la IA busca en la web las noticias y curiosidades de anime con más gancho de los últimos días, sin repetir las ya hechas (`anime/lib/story.js`).
+- **Dos versiones** · YouTube Shorts (40-50 s, más % visto) y TikTok (65-75 s: TikTok solo paga los vídeos de más de 1 minuto). Comparten historia, tráileres y miniatura; la de TikTok tiene su guion largo, voz y montaje (si sale de menos de 61 s se rehace una vez). En shorts ya hechos: «🎵 Hacer versión TikTok».
 - **Guion** · fórmula AniDosis: gancho, «el problema es que…», datos y remate; título con MAYÚSCULAS, palabras a resaltar en amarillo/rojo y qué se ve en cada frase.
 - **Voz** · a elegir entre las dos voces del canal (hombre o mujer, de la biblioteca de ElevenLabs), alineada palabra a palabra (Whisper).
 - **Miniatura** · también es el primer fotograma (0,3 s). La IA elige el mejor primer plano del tráiler, Codex (image_gen, ChatGPT Plus) lo redibuja como portada sin texto y el texto (2-4 palabras, una en amarillo, en la zona segura de arriba) se pone a 4K (`anime/lib/thumb.js`). Se descarga en 4K (2160×3840) y en 1080×1920 (< 2 MB, para YouTube). Si Codex no puede, se usa el fotograma retocado.

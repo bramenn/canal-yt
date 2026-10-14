@@ -117,7 +117,9 @@ function render() {
         <div class="title">${esc(p.script?.title)}</div>
         <div class="hint">${esc(p.story?.anime)} · ${esc(p.story?.angle)}${p.voice?.title ? ` · 🎙 ${esc(p.voice.title)}` : ''}</div>
         <div class="row wrap">
-          <a class="btn primary" href="${esc(p.video)}" download="${esc(slug(p.script?.title ?? p.id))}.mp4">⬇ MP4</a>
+          <a class="btn primary" href="${esc(p.video)}" download="${esc(slug(p.script?.title ?? p.id))}-youtube.mp4" title="Para YouTube Shorts">⬇ YouTube${p.duration ? ` · ${p.duration} s` : ''}</a>
+          ${p.tiktok ? `<a class="btn primary" href="${esc(p.tiktok.video)}" download="${esc(slug(p.script?.title ?? p.id))}-tiktok.mp4" title="Más de 1 minuto: entra en el programa de pagos de TikTok">⬇ TikTok · ${p.tiktok.duration} s</a>`
+    : '<button data-act="tiktok" title="Versión de más de 1 minuto para poder monetizar en TikTok">🎵 Hacer versión TikTok</button>'}
           <button data-act="copy-yt" title="Título, descripción con pregunta y hashtags para YouTube Shorts">📋 YouTube</button>
           <button data-act="copy-tt" title="Texto con palabras clave, pregunta y hashtags para TikTok">📋 TikTok</button>
           <button data-act="remake" title="Guion, voz y montaje nuevos (con la voz elegida arriba)">🔄 Rehacer</button>
@@ -139,6 +141,7 @@ $('#shorts').onclick = async (e) => {
     await navigator.clipboard.writeText(p.script.copy ? copyText(yt ? 'youtube' : 'tiktok', p.script.copy) : oldText(p));
     toast(`Texto para ${yt ? 'YouTube' : 'TikTok'} copiado`, 'ok');
   }
+  if (act === 'tiktok') runTask(`Versión TikTok de «${p.story.anime}»`, async (ui) => { const ev = await streamTo(ui, `/api/tiktok/${p.id}`, {}); return `Versión TikTok lista (${ev.data.duration} s)`; });
   if (act === 'thumb') runTask(`Miniatura de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/thumb/${p.id}`, {}); return 'Miniatura lista: ya es el primer fotograma del vídeo'; });
   if (act === 'remake') runTask(`Rehaciendo «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remake/${p.id}`, { voice: $('#voice-pick').value }); return 'Short rehecho'; });
   if (act === 'del') {

@@ -168,7 +168,7 @@ Dialogue: 1,${assTime(0)},${assTime(total)},Brand,,0,0,0,,${BRAND}
  * script: { lines: [{ text, show, query }], yellow, red }, voice: ruta del mp3, words: [{ w, s, e }] (alineadas).
  * Devuelve la ruta del MP4 (en `dir`).
  */
-export async function montage({ script, voice, words, duration, dir }, log, signal) {
+export async function montage({ script, voice, words, duration, dir, name = 'short', thumb = null }, log, signal) {
   await mkdir(dir, { recursive: true });
   const total = duration + 0.3;
   const lines = lineTimes(script.lines, words, total);
@@ -183,7 +183,7 @@ export async function montage({ script, voice, words, duration, dir }, log, sign
   for (const [i, c] of cuts.entries()) {
     if (signal?.aborted) throw new Error('Cancelado');
     const dur = +(c.e - c.s).toFixed(3);
-    const out = path.join(dir, `cut-${String(i).padStart(3, '0')}.mp4`);
+    const out = path.join(dir, `cut-${name}-${String(i).padStart(3, '0')}.mp4`);
     const q = c.show === 'anime' ? c.query : script.lines.find((l) => l.show === 'anime')?.query ?? c.query;
     // el tráiler del anime; si no lo hay, imágenes del anime (distintas en cada corte)
     if (c.show !== 'imagen' && !sources.has(q)) sources.set(q, await trailer(q, dir, log).catch((e) => { log(`⚠️ ${e.message}: uso imágenes`); return null; }));
@@ -212,15 +212,15 @@ export async function montage({ script, voice, words, duration, dir }, log, sign
     parts.push(out);
   }
   log(`✂️ ${parts.length} cortes montados`);
-  const list = path.join(dir, 'cuts.txt');
+  const list = path.join(dir, `cuts-${name}.txt`);
   await writeFile(list, parts.map((p) => `file '${p}'`).join('\n'));
-  const ass = path.join(dir, 'subs.ass');
+  const ass = path.join(dir, `subs-${name}.ass`);
   await writeFile(ass, subtitles(words, script, total));
   // miniatura: del mejor primer plano del anime principal (o del primer corte si solo hubo imágenes)
   const main = script.lines.find((l) => l.show === 'anime')?.query ?? script.lines[0].query;
   const scenes = sources.get(main)?.scenes ?? [...sources.values()].find(Boolean)?.scenes ?? [{ file: parts[0], s: 0, e: 1 }];
-  const thumb = await makeThumb({ script, anime: main, scenes, dir }, log, signal);
-  const final = path.join(dir, 'short.mp4');
+  thumb ??= await makeThumb({ script, anime: main, scenes, dir }, log, signal); // la versión TikTok reutiliza la de YouTube
+  const final = path.join(dir, `${name}.mp4`);
   // el primer fotograma es la miniatura (0,3 s: lo que se ve en búsquedas y en el perfil sin frenar el gancho)
   await ff(['-f', 'concat', '-safe', '0', '-i', list, '-i', voice, '-loop', '1', '-t', String(total), '-i', thumb.small,
     '-filter_complex', `[0:v]subtitles=${ass}:fontsdir=${FONTS}[v];[2:v]scale=${W}:${H}[t];[v][t]overlay=enable='lt(t,0.3)'[o]`, '-map', '[o]', '-map', '1:a',

@@ -5,7 +5,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { mkdir, stat } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { sendJSON, readBody, sse, setEngine } from '../lib/claude.js';
 import { migrate, listProjects, getProject, saveProject, deleteProject, getSetting } from '../lib/db.js';
@@ -14,7 +14,7 @@ import { gate, serveFrom } from '../lib/web.js';
 import { findStories, thumbText } from './lib/story.js';
 import { makeThumb, firstFrame } from './lib/thumb.js';
 import { readdir, readFile } from 'node:fs/promises';
-import { makeShort } from './lib/make.js';
+import { makeShort, makeTiktok } from './lib/make.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // antes de cargar la voz: sus carpetas cuelgan de PROJECTS_DIR
@@ -92,6 +92,21 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       if (!old) return sendJSON(res, 404, { error: 'No existe' });
       const { voice } = await readBody(req);
       return task(res, (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id));
+    }
+    // ---- versión TikTok (> 1 min) de un short ya hecho: guion largo, voz y montaje; misma miniatura ----
+    if ((m = p.match(/^\/api\/tiktok\/([\w-]+)$/)) && req.method === 'POST') {
+      const pj = await getProject(safeId(m[1]), TABLE);
+      if (!pj) return sendJSON(res, 404, { error: 'No existe' });
+      return task(res, async (emit, track, signal) => {
+        const dir = path.join(MEDIA, pj.id);
+        const thumb = existsSync(path.join(dir, 'thumb.jpg')) ? { full: path.join(dir, 'thumb-4k.jpg'), small: path.join(dir, 'thumb.jpg') } : null;
+        const voiceId = pj.voice?.voiceId ?? voiceOf('hombre').id;
+        const { tiktok, cost } = await makeTiktok({ id: pj.id, story: pj.story, voiceId, thumb }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
+        pj.tiktok = tiktok;
+        await saveProject(pj, user.id, TABLE);
+        emit({ type: 'short', project: pj });
+        return { duration: tiktok.duration, cost };
+      });
     }
     // ---- miniatura de un short ya hecho (sin rehacer voz ni montaje): también pasa a ser su primer fotograma ----
     if ((m = p.match(/^\/api\/thumb\/([\w-]+)$/)) && req.method === 'POST') {

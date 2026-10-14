@@ -63,9 +63,15 @@ const SCRIPT_SCHEMA = {
   required: ['title', 'description', 'hashtags', 'thumb_text', 'thumb_word', 'yellow', 'red', 'lines'],
 };
 
-export async function writeScript(story, emit, track) {
+// duración por plataforma: Shorts premia el % visto (corto); TikTok solo paga (Creator Rewards) vídeos de más de 1 min
+const LENGTH = {
+  youtube: '40-50 segundos: 110-125 palabras, ni una más; cada frase tiene que aportar algo nuevo, nada de relleno',
+  tiktok: '65-75 segundos: 175-200 palabras, NUNCA menos de 170 (TikTok solo paga los vídeos de más de 1 minuto). Usa el tiempo extra para más contexto, un segundo dato curioso y un remate mejor; sin relleno y con el mismo ritmo',
+};
+
+export async function writeScript(story, emit, track, { platform = 'youtube', more = '' } = {}) {
   const ev = await claudeStep({
-    prompt: `Escribe el guion de un short vertical de anime (voz en off en español latino, 40-50 segundos: 110-125 palabras, ni una más; cada frase tiene que aportar algo nuevo, nada de relleno) al estilo de AniDosis.
+    prompt: `Escribe el guion de un short vertical de anime (voz en off en español latino, ${LENGTH[platform]}) al estilo de AniDosis.${more ? `\n${more}` : ''}
 
 Historia: ${story.anime} — ${story.angle}
 Datos (no inventes nada más): ${story.facts}
