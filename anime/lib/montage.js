@@ -6,13 +6,14 @@ import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { run, ytdlp, search } from '../../lib/ytdlp.js';
-import { searchImages, UA } from '../../lib/brave.js';
+import { downloadImages as images } from '../../lib/brave.js';
 import { claudeStep } from '../../lib/claude.js';
 import { FONTS } from '../../lib/thumbnail.js';
+import { W, H, wordEvents, assDoc } from '../../lib/subs.js';
 import { makeThumb } from './thumb.js';
 
 export const BRAND = '@notianimes';
-const W = 1080, H = 1920, FPS = 30;
+const FPS = 30;
 const CUT = 2.6;                           // duración objetivo de cada corte
 // vídeos de reacción/análisis: salen personas, webcams y anuncios encima del anime
 const REACTION = /react|reacci|reaccion|analysis|análisis|analisis|explained|review|resumen|theory|teoría/i;
@@ -89,27 +90,6 @@ async function withoutText(file, scenes, dir, log) {
   return pick.filter((_, i) => !bad.has(i + 1));
 }
 
-/** Hasta `max` imágenes descargables de Brave para la búsqueda (en caché por proyecto). */
-async function images(query, dir, max = 6) {
-  const base = path.join(dir, `img-${norm(query).slice(0, 40)}`);
-  const listFile = `${base}.json`;
-  if (existsSync(listFile)) return JSON.parse(await readFile(listFile, 'utf8'));
-  const files = [];
-  for (const it of (await searchImages(query, 600).catch(() => [])).slice(0, max * 2)) {
-    if (files.length >= max) break;
-    try {
-      const r = await fetch(it.url, { headers: { 'User-Agent': UA, Accept: 'image/*' }, signal: AbortSignal.timeout(15000) });
-      if (!r.ok || !/^image\/(jpeg|png|webp)/.test(r.headers.get('content-type') ?? '')) continue;
-      const raw = `${base}-src`;
-      await writeFile(raw, Buffer.from(await r.arrayBuffer()));
-      const file = `${base}-${files.length}.jpg`;
-      await ff(['-i', raw, '-frames:v', '1', '-q:v', '2', file]);
-      files.push(file);
-    } catch {}
-  }
-  await writeFile(listFile, JSON.stringify(files));
-  return files;
-}
 
 // ---------- tiempos ----------
 /** Inicio y fin de cada frase del guion a partir de las palabras alineadas (por recuento de palabras). */
@@ -123,45 +103,8 @@ function lineTimes(lines, words, total) {
   }).map((l, i, a) => ({ ...l, e: a[i + 1]?.s ?? total }));
 }
 
-// ---------- subtítulos ----------
-const assTime = (t) => { const cs = Math.max(0, Math.round(t * 100)); return `${Math.floor(cs / 360000)}:${String(Math.floor(cs / 6000) % 60).padStart(2, '0')}:${String(Math.floor(cs / 100) % 60).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`; };
-const assEsc = (s) => String(s).replace(/[{}\\]/g, '');
-
-function subtitles(words, { yellow = [], red = [] }, total) {
-  const Y = new Set(yellow.map(norm)), R = new Set(red.map(norm));
-  // grupos de 1-2 palabras (corta en signos de puntuación y en palabras largas)
-  const groups = [];
-  for (let i = 0; i < words.length;) {
-    const g = [words[i]];
-    const a = words[i].w, b = words[i + 1]?.w;
-    if (b && !/[.,;:!?…]$/.test(a) && (a + b).length <= 11 && !R.has(norm(a)) && !Y.has(norm(a))) g.push(words[i + 1]);
-    groups.push(g); i += g.length;
-  }
-  const ev = groups.map((g, i) => {
-    const s = g[0].s, e = Math.min(groups[i + 1]?.[0].s ?? total, g.at(-1).e + 0.5);
-    const text = g.map((w) => {
-      const c = R.has(norm(w.w)) ? '&H002D2DFF&' : Y.has(norm(w.w)) ? '&H001FD2FF&' : '&H00FFFFFF&';
-      return `{\\c${c}}${assEsc(w.w.toUpperCase().replace(/[.,;:]+$/, ''))}`;
-    }).join(' ');
-    return `Dialogue: 0,${assTime(s)},${assTime(e)},Sub,,0,0,0,,{\\pos(540,1150)\\fscx70\\fscy70\\t(0,90,\\fscx100\\fscy100)}${text}`;
-  });
-  return `[Script Info]
-ScriptType: v4.00+
-PlayResX: ${W}
-PlayResY: ${H}
-WrapStyle: 0
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Sub,Anton,190,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,1,0,1,13,5,5,50,50,0,1
-Style: Brand,Anton,76,&H40FFFFFF,&H40FFFFFF,&H60000000,&H00000000,0,0,0,0,100,100,1,0,1,5,0,7,46,46,70,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-${ev.join('\n')}
-Dialogue: 1,${assTime(0)},${assTime(total)},Brand,,0,0,0,,${BRAND}
-`;
-}
+// ---------- subtítulos (lib/subs.js) ----------
+const subtitles = (words, script, total) => assDoc({ events: wordEvents(words, script, total), brand: BRAND, total });
 
 // ---------- montaje ----------
 /**

@@ -15,7 +15,7 @@ import { findStories, thumbText } from './lib/story.js';
 import { makeThumb, firstFrame } from './lib/thumb.js';
 import { readdir, readFile } from 'node:fs/promises';
 import { makeShort, makeTiktok } from './lib/make.js';
-import { refreshStats } from './lib/stats.js';
+import { refreshStats } from '../lib/stats.js';
 import { virality, learnings } from '../lib/virality.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -42,7 +42,13 @@ const voiceOf = (key) => VOICES[key] ?? VOICES.hombre;
 
 // cifras de YouTube, TikTok y Facebook: al arrancar (a los 2 min) y cada 30 min; una sola lectura a la vez
 let statsRun = null;
-const updateStats = (log = () => {}) => (statsRun ??= refreshStats(listProjects(TABLE).then((x) => x), null, log)
+// cuentas del canal de anime (TikTok por su ID interno: el perfil @o_notianimes.com_o)
+const ACCOUNTS = {
+  youtube: 'https://www.youtube.com/@notianimes/shorts',
+  tiktok: 'MS4wLjABAAAA9icKmxw6zuctpoqc4NmoW8un0Hr7bS7tbxB_MYd2GWkhoHwQsvxQ1awZmq0aChId',
+  facebook: 'https://www.facebook.com/notianimescom/reels/',
+};
+const updateStats = (log = () => {}) => (statsRun ??= refreshStats(listProjects(TABLE), null, log, { accounts: ACCOUNTS, table: TABLE })
   .finally(() => { statsRun = null; }));
 setTimeout(() => updateStats().catch((e) => console.error('cifras:', e.message)), 120000);
 setInterval(() => updateStats().catch((e) => console.error('cifras:', e.message)), 30 * 60000);

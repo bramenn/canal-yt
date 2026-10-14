@@ -56,6 +56,19 @@ npm run comic      # → http://localhost:4323 (mismos usuarios y Postgres que f
 - **MP4 vertical** · 1080×1920 con marco de cómic, gancho arriba y subtítulos palabra a palabra (`comic/public/comic.js`), exportado en el navegador.
 - **Común en `lib/`** · `db.js` (Postgres; los episodios van en la tabla `comics`), `auth.js` y `web.js` (login, sesión, usuarios, estáticos), `store.js` (archivos), `claude.js`/`codex.js` (IA), `export.js`. Usuarios: `npm run user -- add <usuario> [--admin]` (`scripts/user.js`).
 
+## Estudio Dinero (`dinero/`)
+
+App aparte: shorts de historias de dinero y negocios en automático (fórmula de Emprende Aprendiendo / MagnatesMedia / Logically Answered), solo shorts, en dos versiones (YouTube 35-45 s y TikTok > 1 min).
+
+```bash
+npm run dinero     # → http://localhost:4325 (mismos usuarios y Postgres; tabla `dineros`)
+```
+
+- **Historias** · reales y verificadas: fracasos y caídas, cómo alguien se hizo rico, decisiones de negocio sorprendentes, actualidad con historia detrás (`dinero/lib/story.js`).
+- **Guion** · gancho con el dato de dinero más sorprendente, quién y el problema, cifras, giro, resultado y final en bucle; cada frase dice qué se ve: foto, cifra, titular o gráfica.
+- **Montaje** · fotos de Brave con movimiento (la del gancho la rehace Codex como ilustración editorial), y tarjetas animadas en ASS: cifra gigante que cuenta, titular de prensa que entra deslizando y gráfica de barras que crecen (`dinero/lib/cards.js`, `dinero/lib/montage.js`). Miniatura de Codex + texto a 4K como primer fotograma.
+- **Cifras, viralidad y aprendizaje** · como en anime (`lib/stats.js`, `lib/virality.js`): las cuentas del canal van en `DINERO_YOUTUBE`, `DINERO_TIKTOK` (secUid) y `DINERO_FACEBOOK`; la marca en `DINERO_BRAND`.
+
 ## Estudio Anime (`anime/`)
 
 App aparte: shorts verticales de curiosidades y noticias de anime al estilo de AniDosis, en automático y en español, con la marca @notianimes.
@@ -65,6 +78,7 @@ npm run anime      # → http://localhost:4324 (mismos usuarios y Postgres; tabl
 ```
 
 - **Historias** · la IA busca en la web las noticias y curiosidades de anime con más gancho de los últimos días, sin repetir las ya hechas (`anime/lib/story.js`).
+- **Viralidad y aprendizaje** · cada short se compara con la mediana del canal a la misma edad (🔥 despegando, 📈 por encima, 😴 atascado), y la IA recibe qué funcionó mejor y peor para imitar el patrón sin repetir (`lib/virality.js`).
 - **Cifras** · vistas, likes y comentarios de cada short en YouTube y TikTok (yt-dlp) y reproducciones en Facebook (navegador sin ventana con playwright-core, opcional), emparejados por título; se leen cada 30 min y con «📊 Actualizar cifras» (`anime/lib/stats.js`).
 - **Dos versiones** · YouTube Shorts (40-50 s, más % visto) y TikTok (65-75 s: TikTok solo paga los vídeos de más de 1 minuto). Comparten historia, tráileres y miniatura; la de TikTok tiene su guion largo, voz y montaje (si sale de menos de 61 s se rehace una vez). En shorts ya hechos: «🎵 Hacer versión TikTok».
 - **Guion** · fórmula AniDosis: gancho, «el problema es que…», datos y remate; título con MAYÚSCULAS, palabras a resaltar en amarillo/rojo y qué se ve en cada frase.
