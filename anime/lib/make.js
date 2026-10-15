@@ -10,7 +10,8 @@ export const copyAbout = (story, script) => `Anime: ${story.anime}. Ángulo: ${s
 Título en pantalla: «${script.title}». Guion: ${script.lines.map((l) => l.text).join(' ')}`;
 
 /** Voz, alineación y montaje de un guion. name: 'short' (YouTube) | 'tiktok'. thumb: miniatura ya hecha (o null). */
-async function produce({ id, script, voiceId, name, thumb }, { tts, aligner, mediaDir }, log, signal) {
+async function produce({ id, story, script, voiceId, name, thumb }, { tts, aligner, mediaDir }, log, signal) {
+  const context = `${story.anime}: ${story.angle}. Datos: ${story.facts}`.slice(0, 1500);
   const text = script.lines.map((l) => l.text).join(' ');
   const [seg] = await tts.synthesize({ provider: 'elevenlabs', projectId: name === 'short' ? id : `${id}-${name}`, voiceId, settings: {}, segments: [{ index: 0, spoken: text }] }, log, signal);
   const file = path.join(tts.AUDIO_DIR, decodeURIComponent(seg.url.replace(/^\/audio\//, '')));
@@ -20,7 +21,7 @@ async function produce({ id, script, voiceId, name, thumb }, { tts, aligner, med
   if (!words.length) throw new Error('No se pudo alinear la voz');
   const duration = al.duration ?? words.at(-1).e;
   log(`🎬 Montando la versión ${name === 'short' ? 'YouTube' : 'TikTok'} (${Math.round(duration)} s)…`);
-  const out = await montage({ script, voice: file, words, duration, dir: path.join(mediaDir, id), name, thumb }, log, signal);
+  const out = await montage({ script, voice: file, words, duration, dir: path.join(mediaDir, id), name, thumb, context }, log, signal);
   return { duration, voice: { voiceId, url: seg.url }, video: `/media/${id}/${name}.mp4`, thumb: out.thumb };
 }
 
@@ -32,7 +33,7 @@ export async function makeTiktok({ id, story, voiceId, thumb, learn = '' }, deps
     log(`✍️ Guion largo para TikTok${attempt > 1 ? ' (más largo)' : ''}…`);
     const { script, cost: c } = await writeScript(story, emit, track, { platform: 'tiktok', more, learn });
     cost += c;
-    const v = await produce({ id, script, voiceId, name: 'tiktok', thumb }, deps, log, signal);
+    const v = await produce({ id, story, script, voiceId, name: 'tiktok', thumb }, deps, log, signal);
     // TikTok solo paga vídeos de más de 1 minuto: si se queda corto, una vez más pidiendo más contenido
     if (v.duration >= 61 || attempt === 2) {
       if (v.duration < 61) log(`⚠️ La versión TikTok dura ${Math.round(v.duration)} s (menos de 1 min)`);
@@ -55,7 +56,7 @@ export async function makeShort({ id, story, voiceId, learn = '' }, deps, emit, 
   log(`📝 «${script.title}» · ${script.lines.length} frases`);
   script.copy = await writeCopy({ about: copyAbout(story, script), brand: '@notianimes', keywordsHint: 'el nombre del anime o del personaje' }, emit, track);
 
-  const yt = await produce({ id, script, voiceId, name: 'short' }, deps, log, signal);
+  const yt = await produce({ id, story, script, voiceId, name: 'short' }, deps, log, signal);
   // versión TikTok (si falla, el short de YouTube se guarda igual)
   let tiktok = null;
   try { const t = await makeTiktok({ id, story, voiceId, thumb: yt.thumb, learn }, deps, emit, track, signal); tiktok = t.tiktok; cost += t.cost; }

@@ -203,7 +203,8 @@ $('#stats').onclick = () => runTask('Leyendo las cifras de YouTube, TikTok y Fac
 $('#logout').onclick = async () => { await postJSON('/api/logout', {}).catch(() => {}); location.replace('/login'); };
 
 // ================= arranque =================
-const [me, shorts] = await Promise.all([getJSON('/api/me'), getJSON('/api/projects').catch(() => [])]);
+const [me, shorts, ai] = await Promise.all([getJSON('/api/me'), getJSON('/api/projects').catch(() => []), getJSON('/api/ai-status').catch(() => null)]);
+$('#ai-engine').textContent = ai ? `IA: ${ai.engine === 'codex' ? 'Codex' : ai.engine === 'claude' ? 'Claude' : 'Automático'}` : '';
 $('#me').textContent = `👤 ${me.username}`;
 list = shorts;
 render();

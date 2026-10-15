@@ -7,8 +7,8 @@ import path from 'node:path';
 import { mkdir, stat } from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { sendJSON, readBody, sse, setEngine } from '../lib/claude.js';
-import { migrate, listProjects, getProject, saveProject, deleteProject, getSetting } from '../lib/db.js';
+import { sendJSON, readBody, sse, setEngine, getEngine } from '../lib/claude.js';
+import { migrate, listProjects, getProject, saveProject, deleteProject } from '../lib/db.js';
 import { countUsers } from '../lib/auth.js';
 import { gate, serveFrom } from '../lib/web.js';
 import { findStories, thumbText } from './lib/story.js';
@@ -29,7 +29,8 @@ const PORT = Number(process.env.PORT || 4324);
 const TABLE = 'animes';
 await mkdir(MEDIA, { recursive: true });
 await migrate();
-if (!process.env.AI_ENGINE) setEngine(await getSetting('engine'));
+// Anime usa Codex directamente por defecto. Claude/auto siguen disponibles con AI_ENGINE.
+if (!process.env.AI_ENGINE) setEngine('codex');
 if (!(await countUsers())) console.log('\n  ⚠️  No hay usuarios: crea el primero con  npm run user -- add <usuario> --admin\n');
 
 // lo aprendido de las cifras (qué funcionó y qué no) para la IA, sin repetir temas ni arranques
@@ -84,6 +85,10 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
   try {
     const user = await gate(req, res, p, path.join(HERE, 'public'));
     if (!user) return;
+
+    if (p === '/api/ai-status' && req.method === 'GET') {
+      return sendJSON(res, 200, { engine: getEngine(), model: getEngine() === 'codex' ? (process.env.CODEX_MODEL || null) : null });
+    }
 
     // ---- automático: historias del día → un short por historia ----
     if (p === '/api/auto' && req.method === 'POST') {
@@ -182,4 +187,4 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
     console.error(err);
     if (!res.headersSent) sendJSON(res, 500, { error: err.message });
   }
-}).listen(PORT, process.env.HOST || '127.0.0.1', () => console.log(`\n  🍥 Estudio Anime en http://localhost:${PORT}\n`));
+}).listen(PORT, process.env.HOST || '127.0.0.1', () => console.log(`\n  🍥 Estudio Anime en http://localhost:${PORT}\n  Motor de IA: ${getEngine()}\n`));
