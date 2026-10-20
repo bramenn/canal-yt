@@ -101,6 +101,7 @@ const LOGO = {
   youtube: svg('M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z', 'logo yt'),
   tiktok: svg('M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z', 'logo tt'),
   facebook: svg('M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z', 'logo fb'),
+  instagram: svg('M12 2.2c3.2 0 3.6 0 4.8.1 3.3.1 4.8 1.7 4.9 4.9.1 1.3.1 1.6.1 4.8s0 3.6-.1 4.8c-.1 3.2-1.7 4.8-4.9 4.9-1.3.1-1.6.1-4.8.1s-3.6 0-4.8-.1c-3.3-.1-4.8-1.7-4.9-4.9C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.8C2.4 3.9 3.9 2.4 7.2 2.3 8.4 2.2 8.8 2.2 12 2.2ZM12 0C8.7 0 8.3 0 7.1.1 2.7.3.3 2.7.1 7.1 0 8.3 0 8.7 0 12s0 3.7.1 4.9c.2 4.4 2.6 6.8 7 7 1.2.1 1.6.1 4.9.1s3.7 0 4.9-.1c4.4-.2 6.8-2.6 7-7 .1-1.2.1-1.6.1-4.9s0-3.7-.1-4.9c-.2-4.4-2.6-6.8-7-7C15.7 0 15.3 0 12 0Zm0 5.8a6.2 6.2 0 1 0 0 12.4 6.2 6.2 0 0 0 0-12.4ZM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8Zm6.4-11.8a1.4 1.4 0 1 0 0 2.9 1.4 1.4 0 0 0 0-2.9Z', 'logo ig'),
 };
 const ICON = {
   views: svg('M12 5C6.5 5 2.3 8.6 1 12c1.3 3.4 5.5 7 11 7s9.7-3.6 11-7c-1.3-3.4-5.5-7-11-7Zm0 11.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9Zm0-2.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z', 'ic'),
@@ -120,7 +121,7 @@ function statsBox(p) {
     return `<a class="stat" href="${esc(x.url)}" target="_blank" rel="noopener" title="Abrir en ${name}">${LOGO[key]}
       <span class="n main">${ICON.views}<b>${nf(x.views)}</b>${d > 0 ? `<em>+${nf(d)}</em>` : ''}</span>${part('likes')}${part('comments')}</a>`;
   };
-  return `<div class="stats">${row('youtube', 'yt', 'YouTube')}${row('tiktok', 'tt', 'TikTok')}${row('facebook', 'fb', 'Facebook')}
+  return `<div class="stats">${row('youtube', 'yt', 'YouTube')}${row('tiktok', 'tt', 'TikTok')}${row('facebook', 'fb', 'Facebook')}${row('instagram', 'ig', 'Instagram')}
     <small class="hint">Actualizado ${ago(s.at)}</small></div>`;
 }
 /** Bloque de la miniatura: vista pequeña, su texto y descargar 4K / YouTube / rehacer. */
@@ -139,25 +140,38 @@ const thumbBox = (small, full, text, name, act) => (small ? `
 // shorts antiguos sin texto por plataforma: título, descripción y hashtags de siempre
 const oldText = (p) => `${p.script.title}\n\n${p.script.description}\n\n${(p.script.hashtags ?? []).map((h) => `#${h.replace(/^#/, '')}`).join(' ')}`;
 
+function commentBox(p) {
+  const comment = p.script?.copy?.suggested_comment?.trim();
+  return `<section class="comment-box" aria-label="Comentario recomendado">
+    ${comment ? `<label>Comentario recomendado<textarea class="comment-text" readonly rows="3">${esc(comment)}</textarea></label>
+    <div class="row wrap"><button data-act="copy-comment">📋 Copiar comentario</button></div>
+    <small class="hint">Pégalo como comentario en tus redes. En YouTube puedes fijarlo.</small>`
+    : '<span class="hint">Prepara una pregunta para invitar a conversar, sin rehacer el vídeo.</span><div class="row wrap"><button data-act="comment">💬 Preparar comentario</button></div>'}
+  </section>`;
+}
+
+const mediaURL = (url, p) => url ? `${url.split('?')[0]}?v=${p.thumbRevision ?? p.updated ?? ''}` : url;
 function render() {
   $('#shorts').innerHTML = list.length ? list.map((p) => `
     <div class="short" data-id="${p.id}">
-      <video src="${esc(p.video)}?v=${p.updated ?? ''}" ${p.thumbSmall ? `poster="${esc(p.thumbSmall)}?v=${p.updated ?? ''}"` : ''} controls preload="metadata" playsinline></video>
+      <video src="${esc(mediaURL(p.video, p))}" ${p.thumbSmall ? `poster="${esc(mediaURL(p.thumbSmall, p))}"` : ''} controls preload="metadata" playsinline></video>
       <div class="body">
         <div class="title">${esc(p.script?.title)}</div>
         <div class="hint">${esc(p.story?.anime)} · ${esc(p.story?.angle)}${p.voice?.title ? ` · 🎙 ${esc(p.voice.title)}` : ''}</div>
         <div class="row wrap">
-          <a class="btn primary" href="${esc(p.video)}" download="${esc(slug(p.script?.title ?? p.id))}-youtube.mp4" title="Para YouTube Shorts">⬇ YouTube${p.duration ? ` · ${p.duration} s` : ''}</a>
-          ${p.tiktok ? `<a class="btn primary" href="${esc(p.tiktok.video)}" download="${esc(slug(p.script?.title ?? p.id))}-tiktok.mp4" title="Más de 1 minuto: entra en el programa de pagos de TikTok">⬇ TikTok · ${p.tiktok.duration} s</a>`
+          <a class="btn primary" href="${esc(mediaURL(p.video, p))}" download="${esc(slug(p.script?.title ?? p.id))}-youtube.mp4" title="Para YouTube Shorts">⬇ YouTube${p.duration ? ` · ${p.duration} s` : ''}</a>
+          ${p.tiktok ? `<a class="btn primary" href="${esc(mediaURL(p.tiktok.video, p))}" download="${esc(slug(p.script?.title ?? p.id))}-tiktok.mp4" title="Más de 1 minuto: entra en el programa de pagos de TikTok">⬇ TikTok · ${p.tiktok.duration} s</a>`
     : '<button data-act="tiktok" title="Versión de más de 1 minuto para poder monetizar en TikTok">🎵 Hacer versión TikTok</button>'}
           <button data-act="copy-yt" title="Título, descripción con pregunta y hashtags para YouTube Shorts">📋 YouTube</button>
           <button data-act="copy-tt" title="Texto con palabras clave, pregunta y hashtags para TikTok">📋 TikTok</button>
+          <button data-act="copy-ig" title="Texto para el reel de Instagram (sube aquí el vídeo de YouTube): tu mejor red">📋 Instagram</button>
           <button data-act="remake" title="Guion, voz y montaje nuevos (con la voz elegida arriba)">🔄 Rehacer</button>
           <button data-act="del" class="danger" title="Borrar">🗑</button>
         </div>
+        ${commentBox(p)}
         ${p.viral?.level ? `<div class="viral ${p.viral.level}" title="Comparado con la mediana de tus shorts a la misma edad · ${p.viral.perHour ?? 0} vistas/h ahora">${esc(p.viral.label)}</div>` : ''}
         ${statsBox(p)}
-        ${thumbBox(p.thumbSmall, p.thumb, p.script?.thumb_text, slug(p.script?.title ?? p.id), 'thumb')}
+        ${thumbBox(mediaURL(p.thumbSmall, p), mediaURL(p.thumb, p), p.script?.thumb_text, slug(p.script?.title ?? p.id), 'thumb')}
         ${p.story?.sources?.length ? `<details class="hint"><summary>Fuentes</summary>${p.story.sources.map((u) => `<div><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></div>`).join('')}</details>` : ''}
       </div>
     </div>`).join('') : '<div class="empty">Aún no hay shorts. Pulsa «Crear shorts de hoy».</div>';
@@ -168,10 +182,24 @@ $('#shorts').onclick = async (e) => {
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (!card || !act) return;
   const p = list.find((x) => x.id === card.dataset.id);
-  if (act === 'copy-yt' || act === 'copy-tt') {
+  if (act === 'copy-comment') {
+    const text = p.script?.copy?.suggested_comment?.trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Comentario copiado: listo para pegar', 'ok');
+    } catch {
+      const field = $('.comment-text', card);
+      field.focus(); field.select();
+      toast('No se pudo copiar automáticamente. El texto está seleccionado para copiarlo.', 'bad');
+    }
+  }
+  if (act === 'comment') runTask(`Comentario de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/comment/${p.id}`, {}); return 'Comentario listo para copiar'; });
+  if (act === 'copy-yt' || act === 'copy-tt' || act === 'copy-ig') {
     const yt = act === 'copy-yt';
     await navigator.clipboard.writeText(p.script.copy ? copyText(yt ? 'youtube' : 'tiktok', p.script.copy) : oldText(p));
-    toast(`Texto para ${yt ? 'YouTube' : 'TikTok'} copiado`, 'ok');
+    // Instagram usa el texto de TikTok (corto, con pregunta y 3-5 hashtags: lo mismo que pide un reel)
+    toast(`Texto para ${yt ? 'YouTube' : act === 'copy-ig' ? 'Instagram' : 'TikTok'} copiado`, 'ok');
   }
   if (act === 'tiktok') runTask(`Versión TikTok de «${p.story.anime}»`, async (ui) => { const ev = await streamTo(ui, `/api/tiktok/${p.id}`, {}); return `Versión TikTok lista (${ev.data.duration} s)`; });
   if (act === 'thumb') runTask(`Miniatura de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/thumb/${p.id}`, {}); return 'Miniatura lista: ya es el primer fotograma del vídeo'; });

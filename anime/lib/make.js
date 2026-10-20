@@ -1,9 +1,10 @@
 // Un short de principio a fin: guion → voz (ElevenLabs) → palabras alineadas (Whisper) → montaje, en dos versiones:
-// YouTube Shorts (40-50 s) y TikTok (65-75 s: TikTok solo paga los vídeos de más de 1 minuto).
+// YouTube Shorts (~40-45 s) y TikTok (61-66 s: TikTok solo paga los vídeos de más de 1 minuto; AniDosis va a 60-61 s).
 import path from 'node:path';
 import { writeScript } from './story.js';
 import { montage } from './montage.js';
 import { writeCopy } from '../../lib/social.js';
+import { tightenVoice } from '../../lib/editor.js';
 
 /** De qué va el short, para el texto de publicación. */
 export const copyAbout = (story, script) => `Anime: ${story.anime}. Ángulo: ${story.angle}. Datos: ${story.facts}
@@ -17,15 +18,16 @@ async function produce({ id, story, script, voiceId, name, thumb }, { tts, align
   const file = path.join(tts.AUDIO_DIR, decodeURIComponent(seg.url.replace(/^\/audio\//, '')));
   log('🎧 Alineando la voz palabra a palabra…');
   const [al] = await aligner.align([{ index: 0, file, prompt: text }], log, signal);
-  const words = (al?.words ?? []).map((w) => ({ w: w.w.trim(), s: w.s, e: w.e })).filter((w) => w.w);
-  if (!words.length) throw new Error('No se pudo alinear la voz');
-  const duration = al.duration ?? words.at(-1).e;
+  const raw = (al?.words ?? []).map((w) => ({ w: w.w.trim(), s: w.s, e: w.e })).filter((w) => w.w);
+  if (!raw.length) throw new Error('No se pudo alinear la voz');
+  // sin las pausas largas tras cada punto: ritmo de ~2,9 palabras/s, como los canales grandes
+  const { file: voice, words, duration } = await tightenVoice(file, raw, al.duration ?? raw.at(-1).e);
   log(`🎬 Montando la versión ${name === 'short' ? 'YouTube' : 'TikTok'} (${Math.round(duration)} s)…`);
-  const out = await montage({ script, voice: file, words, duration, dir: path.join(mediaDir, id), name, thumb, context }, log, signal);
+  const out = await montage({ script, voice, words, duration, dir: path.join(mediaDir, id), name, thumb, context, sources: story.sources }, log, signal);
   return { duration, voice: { voiceId, url: seg.url }, video: `/media/${id}/${name}.mp4`, thumb: out.thumb };
 }
 
-/** Versión TikTok (65-75 s, > 1 min para poder monetizar); reutiliza los tráileres y la miniatura de la de YouTube. */
+/** Versión TikTok (61-66 s, > 1 min para poder monetizar); reutiliza los tráileres y la miniatura de la de YouTube. */
 export async function makeTiktok({ id, story, voiceId, thumb, learn = '' }, deps, emit, track, signal) {
   const log = (text) => emit({ type: 'log', text });
   let cost = 0, more = '';
@@ -54,7 +56,7 @@ export async function makeShort({ id, story, voiceId, learn = '' }, deps, emit, 
   const { script, cost: c1 } = await writeScript(story, emit, track, { learn });
   cost += c1;
   log(`📝 «${script.title}» · ${script.lines.length} frases`);
-  script.copy = await writeCopy({ about: copyAbout(story, script), brand: '@notianimes', keywordsHint: 'el nombre del anime o del personaje' }, emit, track);
+  script.copy = await writeCopy({ about: copyAbout(story, script), brand: '@notianimes', keywordsHint: 'el nombre del anime y el dato concreto que alguien buscaría: temporada, película, fecha, tráiler, personaje, estudio; escrito como un titular de noticia claro, sin juegos de palabras (medido: «Oshi no Ko temporada 3 llega en enero de 2026» y «Gachiakuta: el episodio que revela el pasado de Amo» recibieron 30.000-90.000 impresiones desde búsquedas; los títulos de gancho, menos de 2.000)', includeComment: true }, emit, track);
 
   const yt = await produce({ id, story, script, voiceId, name: 'short' }, deps, log, signal);
   // versión TikTok (si falla, el short de YouTube se guarda igual)

@@ -186,7 +186,7 @@ $('#shorts').onclick = async (e) => {
 $('#auto').onclick = () => {
   const count = Number($('#count').value);
   runTask(`Creando ${count} short${count > 1 ? 's' : ''} de dinero`, async (ui) => {
-    ui.step('Buscar historias → guion → voz → tráileres → montaje');
+    ui.step('Buscar historias → guion → voz → fotos y tarjetas → montaje');
     const ev = await streamTo(ui, '/api/auto', { count, voice: $('#voice-pick').value });
     return `${ev.data.made} short${ev.data.made === 1 ? '' : 's'} listo${ev.data.made === 1 ? '' : 's'}`;
   });
@@ -202,7 +202,8 @@ $('#stats').onclick = () => runTask('Leyendo las cifras de YouTube, TikTok y Fac
 $('#logout').onclick = async () => { await postJSON('/api/logout', {}).catch(() => {}); location.replace('/login'); };
 
 // ================= arranque =================
-const [me, shorts] = await Promise.all([getJSON('/api/me'), getJSON('/api/projects').catch(() => [])]);
+const [me, shorts, ai] = await Promise.all([getJSON('/api/me'), getJSON('/api/projects').catch(() => []), getJSON('/api/ai-status').catch(() => null)]);
+$('#ai-engine').textContent = ai ? `IA: ${ai.engine === 'codex' ? 'Codex' : ai.engine === 'claude' ? 'Claude' : 'Automático'}` : '';
 $('#me').textContent = `👤 ${me.username}`;
 list = shorts;
 render();

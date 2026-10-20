@@ -11,6 +11,7 @@ Título en pantalla: «${script.title}». Guion: ${script.lines.map((l) => l.tex
 
 /** Voz, alineación y montaje de un guion. name: 'short' (YouTube) | 'tiktok'. */
 async function produce({ id, story, script, voiceId, name, thumb }, { tts, aligner, mediaDir }, log, signal) {
+  const context = `${story.subject}: ${story.angle}. Datos: ${story.facts}`.slice(0, 2000);
   const text = script.lines.map((l) => l.text).join(' ');
   const [seg] = await tts.synthesize({ provider: 'elevenlabs', projectId: name === 'short' ? id : `${id}-${name}`, voiceId, settings: {}, segments: [{ index: 0, spoken: text }] }, log, signal);
   const file = path.join(tts.AUDIO_DIR, decodeURIComponent(seg.url.replace(/^\/audio\//, '')));
@@ -20,7 +21,7 @@ async function produce({ id, story, script, voiceId, name, thumb }, { tts, align
   if (!words.length) throw new Error('No se pudo alinear la voz');
   const duration = al.duration ?? words.at(-1).e;
   log(`🎬 Montando la versión ${name === 'short' ? 'YouTube' : 'TikTok'} (${Math.round(duration)} s)…`);
-  const out = await montage({ script, about: story.subject, voice: file, words, duration, dir: path.join(mediaDir, id), name, thumb }, log, signal);
+  const out = await montage({ script, about: story.subject, context, voice: file, words, duration, dir: path.join(mediaDir, id), name, thumb }, log, signal);
   return { duration, voice: { voiceId, url: seg.url }, video: `/media/${id}/${name}.mp4`, thumb: out.thumb };
 }
 

@@ -8,13 +8,14 @@ import { mkdir, stat } from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { sendJSON, readBody, sse, setEngine, getEngine } from '../lib/claude.js';
-import { migrate, listProjects, getProject, saveProject, deleteProject } from '../lib/db.js';
+import { migrate, listProjects, getProject, saveProject, deleteProject, q } from '../lib/db.js';
 import { countUsers } from '../lib/auth.js';
 import { gate, serveFrom } from '../lib/web.js';
 import { findStories, thumbText } from './lib/story.js';
 import { makeThumb, firstFrame } from './lib/thumb.js';
 import { readdir, readFile } from 'node:fs/promises';
-import { makeShort, makeTiktok } from './lib/make.js';
+import { makeShort, makeTiktok, copyAbout } from './lib/make.js';
+import { writeComment } from '../lib/social.js';
 import { refreshStats } from '../lib/stats.js';
 import { virality, learnings } from '../lib/virality.js';
 
@@ -48,6 +49,7 @@ const ACCOUNTS = {
   youtube: 'https://www.youtube.com/@notianimes/shorts',
   tiktok: 'MS4wLjABAAAA9icKmxw6zuctpoqc4NmoW8un0Hr7bS7tbxB_MYd2GWkhoHwQsvxQ1awZmq0aChId',
   facebook: 'https://www.facebook.com/notianimescom/reels/',
+  instagram: 'https://www.instagram.com/notianimes_/reels/',
 };
 const updateStats = (log = () => {}) => (statsRun ??= refreshStats(listProjects(TABLE), null, log, { accounts: ACCOUNTS, table: TABLE })
   .finally(() => { statsRun = null; }));
@@ -88,6 +90,32 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
 
     if (p === '/api/ai-status' && req.method === 'GET') {
       return sendJSON(res, 200, { engine: getEngine(), model: getEngine() === 'codex' ? (process.env.CODEX_MODEL || null) : null });
+    }
+
+    // Solo texto para copiar: nunca rehace ni publica el vídeo.
+    if ((m = p.match(/^\/api\/comment\/([\w-]+)$/)) && req.method === 'POST') {
+      const pj = await getProject(safeId(m[1]), TABLE);
+      if (!pj) return sendJSON(res, 404, { error: 'No existe' });
+      return task(res, async (emit, track, signal) => {
+        if (pj.script?.copy?.suggested_comment?.trim()) {
+          emit({ type: 'short', project: pj });
+          return { comment: pj.script.copy.suggested_comment };
+        }
+        emit({ type: 'log', text: '💬 Preparando una pregunta sobre este vídeo…' });
+        const comment = await writeComment(copyAbout(pj.story, pj.script), emit, track);
+        if (signal.aborted) throw new Error('Cancelado');
+        // Actualización parcial: conserva las cifras y cualquier otro cambio concurrente.
+        // Si se rehízo o borró el vídeo mientras respondía la IA, no guardamos una pregunta obsoleta.
+        const updated = Date.now();
+        const { rows } = await q(`UPDATE animes SET
+          data = jsonb_set(jsonb_set(data, '{script,copy}', COALESCE(NULLIF(data#>'{script,copy}', 'null'::jsonb), '{}'::jsonb) || $2::jsonb), '{updated}', to_jsonb($3::bigint)),
+          updated = $3, updated_by = $4
+          WHERE id = $1 AND deleted_at IS NULL AND data->'script'->'lines' = $5::jsonb AND data->'story' = $6::jsonb
+          RETURNING data`, [pj.id, JSON.stringify({ suggested_comment: comment }), updated, user.id, JSON.stringify(pj.script.lines), JSON.stringify(pj.story)]);
+        if (!rows.length) throw new Error('El vídeo cambió. Actualiza la página e inténtalo de nuevo.');
+        emit({ type: 'short', project: rows[0].data });
+        return { comment };
+      });
     }
 
     // ---- automático: historias del día → un short por historia ----
@@ -147,14 +175,20 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
         if (!pj.script.thumb_text) Object.assign(pj.script, await thumbText(pj.script, emit, track));
         log(`🖼 Texto de la miniatura: «${pj.script.thumb_text}»`);
         const main = pj.script.lines.find((l) => l.show === 'anime')?.query ?? pj.story.anime;
-        const sf = (await readdir(dir)).find((f) => /^tr-.*\.json$/.test(f));
-        const scenes = sf ? JSON.parse(await readFile(path.join(dir, sf), 'utf8')) : [{ file: path.join(dir, 'short.mp4'), s: 1, e: 3 }];
-        const thumb = await makeThumb({ script: pj.script, anime: main, scenes, dir }, log, signal);
+        const catalogs = (await readdir(dir)).filter((f) => /^tr-.*-cat-v3\.json$/.test(f));
+        const scenes = catalogs.length ? (await Promise.all(catalogs.map(async (f) => JSON.parse(await readFile(path.join(dir, f), 'utf8'))))).flat()
+          : [{ file: path.join(dir, 'short.mp4'), s: 1, e: 3 }];
+        const context = `${pj.story.anime}: ${pj.story.angle}. ${pj.story.facts}`;
+        const thumb = await makeThumb({ script: pj.script, anime: main, scenes, dir, context }, log, signal);
         log('🎬 Poniéndola como primer fotograma del vídeo…');
         await firstFrame(path.join(dir, 'short.mp4'), thumb.small);
-        Object.assign(pj, { thumb: `/media/${pj.id}/thumb-4k.jpg`, thumbSmall: `/media/${pj.id}/thumb.jpg` });
-        await saveProject(pj, user.id, TABLE);
-        emit({ type: 'short', project: pj });
+        if (pj.tiktok?.video && existsSync(path.join(dir, 'tiktok.mp4'))) await firstFrame(path.join(dir, 'tiktok.mp4'), thumb.small);
+        const revision = Date.now();
+        // No sobrescribir las estadísticas que se hayan actualizado durante la generación.
+        const { rows } = await q(`UPDATE animes SET data = jsonb_set(jsonb_set(data || $2::jsonb,
+          '{script,thumb_text}', to_jsonb($5::text)), '{script,thumb_word}', to_jsonb($6::text)), updated = $3, updated_by = $4
+          WHERE id = $1 AND deleted_at IS NULL RETURNING data`, [pj.id, JSON.stringify({ thumb: `/media/${pj.id}/thumb-4k.jpg?v=${revision}`, thumbSmall: `/media/${pj.id}/thumb.jpg?v=${revision}`, thumbRevision: revision, updated: revision }), revision, user.id, pj.script.thumb_text || pj.script.title, pj.script.thumb_word || '']);
+        if (rows[0]) emit({ type: 'short', project: rows[0].data });
         return { ok: true };
       });
     }

@@ -13,8 +13,9 @@ const STORIES_SCHEMA = {
         type: 'object',
         properties: {
           anime: { type: 'string' }, angle: { type: 'string' }, facts: { type: 'string' }, sources: { type: 'array', items: { type: 'string' } },
+          type: { type: 'string', enum: ['noticia', 'atemporal'] },
         },
-        required: ['anime', 'angle', 'facts', 'sources'],
+        required: ['anime', 'angle', 'facts', 'sources', 'type'],
       },
     },
   },
@@ -23,20 +24,28 @@ const STORIES_SCHEMA = {
 
 export async function findStories({ count = 3, avoid = [], learn = '' }, emit, track) {
   const today = new Date().toISOString().slice(0, 10);
+  // medido en YouTube: la noticia del día da un pico de un mes (MAPPA/JJK: 16.656 vistas, todas en mayo); un tema atemporal
+  // con título buscable gotea ~1.000 vistas al mes durante un año (Gachiakuta: solo el 11 % el primer mes)
+  const timeless = count >= 4 ? 2 : count >= 2 ? 1 : 0;
   const ev = await claudeStep({
-    prompt: `Hoy es ${today}. Busca en la web (noticias de anime de los últimos 7-10 días: Anime News Network, Crunchyroll News, X/Twitter de estudios, Reddit r/anime, ComicBook, CBR, medios japoneses) y elige las ${count} historias de anime con MÁS gancho para un short de TikTok/YouTube en español al estilo del canal AniDosis.
+    prompt: `Hoy es ${today}. Busca en la web (noticias de anime de los últimos 7-10 días: Anime News Network, Crunchyroll News, X/Twitter de estudios, Reddit r/anime, ComicBook, CBR, medios japoneses) y elige las ${count} historias de anime con MÁS gancho (${timeless ? `${count - timeless} noticias y ${timeless} atemporal${timeless > 1 ? 'es' : ''}` : 'noticias'}) para un short de TikTok/YouTube en español al estilo del canal AniDosis.
 
 Lo que funciona en ese estilo (de sus shorts con más de 500.000 vistas): una curiosidad o polémica con un giro gracioso o sorprendente, no una noticia seca.
 - «Este anime inventó un ataque tan largo que ningún villano lo soporta»
 - «Este nuevo anime te advierte de algo antes de empezar»
 - «Esta actriz de voz recibió un personaje MUY extraño»
 - «Los fans de Dragon Ball están demasiado rotos»
-Valen: anuncios con un detalle insólito, récords raros, polémicas de fans, decisiones absurdas de estudios, escenas virales, datos curiosos de un anime nuevo de esta temporada.
-Evita: rumores sin fuente, noticias muy de nicho, spoilers enormes sin aviso${avoid.length ? `, y estas historias ya hechas: ${avoid.slice(0, 40).join(' · ')}` : ''}.
+Lo que más vistas da (medido en 2026-10 en este canal y en Kudasai, Animelos, Rincón Otaku y Doctor Random), por orden:
+1. Franquicias gigantes con noticia oficial (Jujutsu Kaisen, One Piece, Naruto, Demon Slayer, Chainsaw Man, One Punch Man…): nuestros únicos shorts de 7.000-16.000 vistas.
+2. Regresos y despedidas con nostalgia o polémica: «rompe su silencio tras 9 años», «regresa», «ADIÓS a…», «los animes que NO volverán» (nuestro récord: 31.000 en TikTok).
+3. Escándalos y curiosidades con gente real: censura, prohibiciones, fans que colapsan una web, una VTuber de 42 años, un cosplayer, un músico o una marca famosa que se cruza con un anime.
+Valen también: récords raros, polémicas de fans, decisiones absurdas de estudios.
+Evita: anuncios secos (tráiler, fecha o reparto) de animes poco conocidos (los que menos rinden y los que más se quedan en 0), rumores sin fuente, spoilers enormes sin aviso${avoid.length ? `, y estas historias ya hechas: ${avoid.slice(0, 40).join(' · ')}` : ''}.
 
+${timeless ? `ATEMPORALES (${timeless}, "type": "atemporal"; las demás "noticia"): sobre un anime que se esté emitiendo esta temporada o una franquicia gigante, un tema que siga interesando dentro de un año a quien lo vea por primera vez: el pasado o el secreto de un personaje, qué revela un episodio o arco concreto, cómo funciona un poder, un detalle oculto que casi nadie notó. Datos de fuentes fiables (wiki oficial, el propio anime o manga, entrevistas), sin spoilers del final. Ej. real: «Gachiakuta: el episodio que revela el oscuro pasado de Amo».\n` : ''}
 ${learn}
 
-Para cada una: "anime" (nombre del anime tal como se busca su tráiler en YouTube, en romaji o inglés), "angle" (el giro gracioso o sorprendente en una frase), "facts" (los datos concretos y verificados: nombres, cifras, fechas, qué pasó exactamente) y "sources" (URLs).`,
+Para cada una: "anime" (nombre del anime tal como se busca su tráiler en YouTube, en romaji o inglés), "angle" (el giro gracioso o sorprendente en una frase), "facts" (los datos concretos y verificados: nombres, cifras, fechas, qué pasó exactamente), "sources" (URLs) y "type" ("noticia" | "atemporal").`,
     schema: STORIES_SCHEMA, system: 'Eres guionista de un canal de shorts de anime en español. Verificas los datos antes de contarlos.',
     model: 'sonnet', effort: 'medium', tools: ['WebSearch', 'WebFetch'],
   }, emit, track);
@@ -57,7 +66,7 @@ const SCRIPT_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { text: { type: 'string' }, show: { type: 'string', enum: ['anime', 'imagen'] }, query: { type: 'string' } },
+        properties: { text: { type: 'string' }, show: { type: 'string', enum: ['anime', 'imagen', 'video'] }, query: { type: 'string' } },
         required: ['text', 'show', 'query'],
       },
     },
@@ -68,7 +77,7 @@ const SCRIPT_SCHEMA = {
 // duración por plataforma: Shorts premia el % visto (corto); TikTok solo paga (Creator Rewards) vídeos de más de 1 min
 const LENGTH = {
   youtube: '40-50 segundos: 110-125 palabras, ni una más; cada frase tiene que aportar algo nuevo, nada de relleno',
-  tiktok: '65-75 segundos: 175-200 palabras, NUNCA menos de 170 (TikTok solo paga los vídeos de más de 1 minuto). Usa el tiempo extra para más contexto, un segundo dato curioso y un remate mejor; sin relleno y con el mismo ritmo',
+  tiktok: '61-66 segundos: 180-195 palabras, NUNCA menos de 178 (TikTok solo paga los vídeos de más de 1 minuto; se narra a ~2,9 palabras/s sin pausas largas). Usa el tiempo extra para más contexto, un segundo dato curioso y un remate mejor; sin relleno y con el mismo ritmo',
 };
 
 export async function writeScript(story, emit, track, { platform = 'youtube', more = '', learn = '' } = {}) {
@@ -76,20 +85,22 @@ export async function writeScript(story, emit, track, { platform = 'youtube', mo
     prompt: `Escribe el guion de un short vertical de anime (voz en off en español latino, ${LENGTH[platform]}) al estilo de AniDosis.${more ? `\n${more}` : ''}${learn}
 
 Historia: ${story.anime} — ${story.angle}
-Datos (no inventes nada más): ${story.facts}
+Datos (no inventes nada más): ${story.facts}${story.type === 'atemporal' ? '\nTema ATEMPORAL: se verá durante meses, así que nada de «hoy», «acaba de», «esta semana» ni fechas relativas; cuéntalo para quien lo descubre ahora.' : ''}
 
 Fórmula de AniDosis:
-1. Gancho en la primera frase, que se entiende sin contexto y crea curiosidad («Este anime inventó un ataque que puede vencer a cualquier villano de cualquier anime.»).
+1. Gancho en la primera frase, que se entiende sin contexto y crea curiosidad. Sus 2-3 PRIMERAS palabras son el nombre más famoso de la historia (Nirvana, Naruto, Toyota, Jujutsu Kaisen…), nunca algo genérico como «Esta cantante» o «Un director» (medido en YouTube: con el nombre famoso delante se queda a verlo el 59 %; con «Esta cantante…», el 42 %).
 2. Giro: «El problema es que…» / «Pero hay un detalle…».
 3. Explicación con los datos concretos, con un tono cercano y con humor (habla al espectador: «Mira», «Verás», «Y es que…»).
-4. Remate gracioso o sorprendente al final, sin despedidas ni «suscríbete». La última frase puede enlazar con la primera para que el vídeo se vea en bucle.
+4. Remate gracioso o sorprendente.
+5. Última frase: una pregunta de OPINIÓN al espectador, fácil de responder y que divida (elegir, juzgar o imaginar): «¿Tú lo verías o te parece demasiado?», «¿Cuál anime merece volver así?». Nada de «¿qué opinas?» genérico, despedidas ni «suscríbete» (medido: estas preguntas dan 2,5 veces más comentarios).
 Frases cortas y naturales para leer en voz alta; los números escritos en palabras; nombres japoneses tal cual.
 
 Devuelve:
-- "title": título al estilo AniDosis, palabras clave en MAYÚSCULAS, ≤ 70 caracteres, sin el nombre del canal (p. ej. «Este ANIME Se DESPIDIÓ De La MEJOR Manera POSIBLE!»).
+- "title": título al estilo AniDosis, una AFIRMACIÓN (no una pregunta: los títulos con pregunta rinden menos), palabras clave en MAYÚSCULAS, ≤ 70 caracteres, sin el nombre del canal (p. ej. «Este ANIME Se DESPIDIÓ De La MEJOR Manera POSIBLE!»).
 - "thumb_text": el texto de la miniatura (primer fotograma): 2-4 palabras en MAYÚSCULAS que despierten curiosidad o emoción sin contarlo todo y que NO repitan el título (juegan juntos: el título da contexto, la miniatura el gancho). Ej.: «NADIE LO SOPORTA», «¿CANCELADO?», «12 MINUTOS GRITANDO». "thumb_word": la palabra de "thumb_text" que va en amarillo.
 - "description": 1-2 frases para la descripción del short. "hashtags": 5-8 sin '#'.
-- "lines": el guion frase a frase (cada "text" de 4 a 18 palabras, en orden; juntas forman el guion completo). Para cada frase, qué se ve: "show" = "anime" (escenas del tráiler del anime; "query" = nombre del anime para buscar su tráiler/PV en YouTube, normalmente "${story.anime}") o "imagen" (una foto de algo real: un estudio, una persona, un cartel, un récord; "query" = búsqueda de imágenes concreta). Casi siempre "anime".
+- "lines": el guion frase a frase (cada "text" de 4 a 18 palabras, en orden; juntas forman el guion completo). Para cada frase, qué se ve: "show" = "anime" (escenas del tráiler del anime; "query" = nombre del anime para buscar su tráiler/PV en YouTube, normalmente "${story.anime}") , "imagen" (una foto de algo real: una persona, un post, un cartel, un producto, un récord; "query" = búsqueda de imágenes concreta) o "video" (un vídeo concreto que no es el anime: un videoclip, un anuncio, un clip viral, una recreación; "query" = búsqueda exacta en YouTube de ESE vídeo, p. ej. «Eminem EZ Mil MADARA official video», «Toyota Initial D water cup»).
+  REGLA: cada frase que habla de un contenido concreto (un vídeo, una foto, un post, una canción, un producto, una persona real) lo MUESTRA con "video" o "imagen"; el público se queja cuando se habla de algo y no se ve. El resto, "anime".
 - "yellow": 6-12 palabras sueltas del guion que se resaltan en amarillo (nombres, cifras, lo importante). "red": 2-5 palabras que se resaltan en rojo (lo impactante o negativo). Palabras exactas tal como aparecen en el guion.`,
     schema: SCRIPT_SCHEMA, system: 'Eres guionista de shorts virales de anime en español latino.', model: 'sonnet', effort: 'medium', tools: [],
   }, emit, track);

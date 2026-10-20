@@ -129,6 +129,8 @@ button.primary:hover { background: #ff8d3a; }
 .short .body { padding: 12px 14px 14px; display: grid; gap: 8px; }
 .short .title { font-weight: 800; font-size: 15px; line-height: 1.35; }
 .short .row button, .short .row a { font-size: 13px; padding: 6px 10px; }
+.comment-box { min-width: 0; display: grid; gap: 8px; padding: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-sm); }
+.comment-text { min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
 .auto { display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap; }
 .auto select { width: auto; }
 @media (max-width: 760px) {
@@ -160,6 +162,7 @@ a.stat:hover { border-color: var(--line2); background: #121417; }
 .stat .logo.yt { fill: #ff0033; }
 .stat .logo.tt { fill: #fff; filter: drop-shadow(1px 1px 0 #fe2c55) drop-shadow(-1px -1px 0 #25f4ee); }
 .stat .logo.fb { fill: #1877f2; }
+.stat .logo.ig { fill: #e1306c; }
 .stat .n { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
 .stat .main { color: var(--text); min-width: 74px; }
 .stat .main b { font-size: 14px; }

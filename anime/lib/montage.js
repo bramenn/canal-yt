@@ -25,14 +25,14 @@ const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,
 
 // ---------- fuentes ----------
 /** Escenas limpias de los tráileres/PV del anime en YouTube (vídeos hasta tener ~20, máx. 4; una vez por anime y proyecto). */
-async function trailer(query, dir, log, context = '') {
+async function trailer(query, dir, log, context = '', exact = false) {
   const slug = norm(query).slice(0, 40) || 'anime';
   // Cambia el nombre cuando cambia el criterio visual: no reutilizar catálogos creados antes de filtrar retículas y texto.
   const scenesFile = path.join(dir, `tr-${slug}-cat-v3.json`);
   if (existsSync(scenesFile)) return { scenes: JSON.parse(await readFile(scenesFile, 'utf8')) };
   // primero el PV japonés (sin subtítulos); anuncios nuevos aún no tienen tráiler: opening o cada parte del nombre
   const parts = String(query).split(/\s+(?:x|×|&|y)\s+|:\s*/i).filter((x) => x.trim() && x !== query);
-  const tries = [`${query} PV`, `${query} anime trailer`, `${query} anime opening`, ...parts.map((x) => `${x} anime PV`)];
+  const tries = exact ? [query] : [`${query} PV`, `${query} anime trailer`, `${query} anime opening`, ...parts.map((x) => `${x} anime PV`)];
   const scenes = [], seen = new Set();
   let videos = 0, err = null, first = null;
   // YouTube corta a ratos (403): otro formato y, si no, el siguiente vídeo
@@ -47,7 +47,7 @@ async function trailer(query, dir, log, context = '') {
         log(`🎞 Tráiler de «${query}»: ${cand.title} (${cand.channel})`);
         videos++;
         first ??= { file, dur: cand.duration };
-        scenes.push(...await catalogScenes(file, await scenesOf(file, cand.duration), dir, log, `${query}. ${context}`).catch((e) => { log(`⚠️ Sin revisar escenas: ${e.message.slice(0, 120)}`); return []; }));
+        scenes.push(...await catalogScenes(file, await scenesOf(file, cand.duration), dir, log, `${query}. ${context}`, exact).catch((e) => { log(`⚠️ Sin revisar escenas: ${e.message.slice(0, 120)}`); return []; }));
         break;
       }
       if (scenes.length >= 20 || videos >= 4) break find;
@@ -58,6 +58,27 @@ async function trailer(query, dir, log, context = '') {
   if (scenes.length < 5) throw new Error(`El tráiler de «${query}» no tiene suficientes escenas limpias`);
   await writeFile(scenesFile, JSON.stringify(scenes));
   return { scenes };
+}
+
+/** La imagen principal (og:image) de cada noticia de la historia: suele ser justo lo que se cuenta (el post, la foto, el anuncio). */
+async function newsImages(urls = [], dir) {
+  const out = [];
+  for (const [k, u] of urls.slice(0, 4).entries()) {
+    try {
+      const html = await (await fetch(u, { headers: { 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) })).text();
+      const meta = (p) => html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${p}["'][^>]+content=["']([^"']+)`, 'i'))?.[1]
+        ?? html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${p}["']`, 'i'))?.[1];
+      const img = meta('og:image') ?? meta('twitter:image');
+      if (!img) continue;
+      const res = await fetch(new URL(img.replace(/&amp;/g, '&'), u), { headers: { 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(20000) });
+      if (!res.ok) continue;
+      const file = path.join(dir, `news-${k}.img`);
+      await writeFile(file, Buffer.from(await res.arrayBuffer()));
+      const [w, h] = (await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', file])).trim().split(',').map(Number);
+      if (w >= 400 && h >= 300) out.push({ file, title: (meta('og:title') ?? '').replace(/&[#\w]+;/g, ' ').slice(0, 120) });
+    } catch { /* noticia sin imagen o caída: no pasa nada */ }
+  }
+  return out;
 }
 
 /** Planos del vídeo (cambios de escena) enteros, sin el principio (logos), el final (créditos) ni negros. */
@@ -76,7 +97,7 @@ async function scenesOf(file, dur) {
  * reconoce), el plano, la acción y la emoción; quita las que no sirven (texto grande, logos, personas reales, negro) y
  * marca las mejores para miniatura.
  */
-async function catalogScenes(file, scenes, dir, log, context) {
+async function catalogScenes(file, scenes, dir, log, context, real = false) {
   const all = scenes.slice(0, 64);
   if (!all.length) { log('👀 Escenas del tráiler: ninguna útil'); return []; }
   const bad = new Set();
@@ -89,10 +110,10 @@ async function catalogScenes(file, scenes, dir, log, context) {
     }
     await ff(['-framerate', '1', '-i', `${tag}-%02d.jpg`, '-vf', `tile=4x${Math.ceil(pick.length / 4)}:padding=4:color=white`, '-frames:v', '1', `${tag}.jpg`]);
     const ev = await claudeStep({
-      prompt: `Lee la imagen ${path.basename(tag)}.jpg: es una rejilla numerada (1-${pick.length}) con un fotograma de cada escena de un tráiler de anime (${context}).
+      prompt: `Lee la imagen ${path.basename(tag)}.jpg: es una rejilla numerada (1-${pick.length}) con un fotograma de cada escena de ${real ? 'un vídeo real del que habla la noticia' : 'un tráiler de anime'} (${context}).
 Para CADA una de las ${pick.length} escenas devuelve en "scenes": "n" (número), "desc" (qué se ve, ≤ 12 palabras, concreto), "who" (qué personaje sale, por su nombre si lo reconoces por el anime y la historia, o una descripción breve: «chica pelirroja con delantal»; vacío si no sale nadie), "shot" (primer plano | plano medio | plano general | detalle), "action" (0 quieto … 3 mucha acción), "emotion" (una palabra).
 En "thumb" hasta 2 números de escenas que serían una buena miniatura (primer plano con emoción clara, nítido).
-En "bad" las que NO sirven: texto grande o en el centro (títulos, créditos, fechas, logos, carteles, portadas de manga o títulos japoneses), retículas/miras/interfaz gráfica que cubran la imagen, viñetas o páginas de manga, dibujos en blanco y negro, imágenes estáticas promocionales con texto, personas reales, webcams o anuncios, pantallas negras o casi vacías, muy borrosas. Acepta solo fotogramas de animación a color, sin texto dominante; los subtítulos pequeños abajo no importan (se recortan).`,
+En "bad" las que NO sirven: texto grande o en el centro (títulos, créditos, fechas, logos, carteles, portadas de manga o títulos japoneses), retículas/miras/interfaz gráfica que cubran la imagen, viñetas o páginas de manga, dibujos en blanco y negro, imágenes estáticas promocionales con texto, ${real ? '' : 'personas reales, webcams o anuncios, '}pantallas negras o casi vacías, muy borrosas. Acepta solo fotogramas ${real ? 'nítidos del vídeo (personas, lugares y objetos reales valen)' : 'de animación a color'}, sin texto dominante; los subtítulos pequeños abajo no importan (se recortan).`,
       schema: {
         type: 'object',
         properties: {
@@ -159,7 +180,7 @@ async function renderCut(c, item, uses, out) {
  * script: { lines: [{ text, show, query }], yellow, red }, voice: mp3, words: [{ w, s, e }] (alineadas); context: de
  * qué va (historia y personajes). Devuelve { video, thumb }.
  */
-export async function montage({ script, voice, words, duration, dir, name = 'short', thumb = null, context = '' }, log, signal) {
+export async function montage({ script, voice, words, duration, dir, name = 'short', thumb = null, context = '', sources: news = [] }, log, signal) {
   await mkdir(dir, { recursive: true });
   const total = duration + 0.3;
   const lines = lineTimes(script.lines, words, total);
@@ -189,16 +210,32 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
       : `${l.query} official photo clean no text`;
     (await pickRelevant(await images(query, dir), query, context, dir)).slice(0, 3).forEach((f) => catalog.push({ kind: 'image', file: f, line, id: `F${catalog.length + 1}`, desc: l.query, shot: 'foto', action: 0 }));
   }
+  // lo que se cuenta, tal cual: el vídeo concreto de las frases «video» y la foto de cada noticia
+  // ponytail: como mucho 2 vídeos distintos (las búsquedas parecidas devuelven el mismo clip y cada uno se revisa con IA)
+  const videoLines = [...script.lines.entries()].filter(([, l]) => l.show === 'video');
+  for (const [line, l] of videoLines.filter(([, l], k) => videoLines.findIndex(([, m]) => norm(m.query) === norm(l.query)) === k).slice(0, 2)) {
+    const t = await trailer(l.query, dir, log, context, true).catch((e) => { log(`⚠️ Vídeo «${l.query}»: ${e.message.slice(0, 100)}`); return null; });
+    if (t) t.scenes.forEach((x) => catalog.push({ ...x, kind: 'video', line, id: `V${catalog.length + 1}`, desc: `vídeo real «${l.query}»: ${x.desc ?? ''}` }));
+    else (await pickRelevant(await images(l.query, dir), l.query, context, dir)).slice(0, 3).forEach((f) => catalog.push({ kind: 'image', file: f, line, id: `F${catalog.length + 1}`, desc: l.query, shot: 'foto', action: 0 }));
+  }
+  const newsPics = await newsImages(news, dir);
+  if (newsPics.length) log(`📰 ${newsPics.length} foto${newsPics.length === 1 ? '' : 's'} de las noticias: ${newsPics.map((n) => n.title.slice(0, 50)).join(' · ')}`);
+  for (const n of newsPics) catalog.push({ kind: 'image', file: n.file, id: `F${catalog.length + 1}`, desc: `foto de la noticia: ${n.title}`, who: '', shot: 'foto', action: 0 });
   if (!catalog.length) throw new Error('Sin escenas ni imágenes para montar');
   // Las imágenes de respaldo también deben participar en la detección de tomas casi iguales.
   for (const item of catalog) if (item.kind === 'image' && !item.hash) item.hash = await dhash(item.file);
   const takes = groupTakes(catalog);
   // El ritmo no se relaja por tener poco material: un short necesita cambios visuales frecuentes. Si faltan tomas,
   // el editor reutiliza una parte distinta de una escena antes que dejar un plano estático de 4-5 segundos.
-  const target = 2.3;
-  const slots = cutSlots(lines, words, script, { min: 1.5, target, max: 3.1 });
+  // medido (2026-10): AniDosis cambia de imagen cada ~1 s; con nuestro material, ~1,9 s cortando en las pausas
+  const target = 1.9;
+  const slots = cutSlots(lines, words, script, { min: 1.3, target, max: 2.6, hook: 2 });
   log(`🎬 Editor IA: ${slots.length} cortes de ~${target.toFixed(1)} s con ${catalog.length} planos (${takes} tomas distintas)…`);
   const { plan, climax, motion } = await planEdit({ slots, lines, catalog, context }, log);
+  // el gancho (2 primeros s) siempre con primeros planos de personajes distintos, los de más acción primero: medido,
+  // los virales abren con caras y emoción, y la IA a veces elige planos abstractos
+  const faces = catalog.filter((c) => c.kind !== 'image' && c.who && /primer/i.test(c.shot ?? '')).sort((a, b) => (b.action ?? 0) - (a.action ?? 0));
+  slots.forEach((x, i) => { if (x.s < 2 && faces[i]) plan[i] = faces[i].id; });
   const byId = new Map(catalog.map((c) => [c.id, c]));
   const uses = new Map();
   const parts = [];
@@ -228,15 +265,16 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
   // miniatura: del mejor primer plano del anime principal (o del primer corte si solo hubo imágenes)
   const main = animes[0] ?? script.lines[0].query;
   const scenes = sources.get(main)?.scenes ?? [{ file: parts[0], s: 0, e: 1 }];
-  thumb ??= await makeThumb({ script, anime: main, scenes, dir }, log, signal); // la versión TikTok reutiliza la de YouTube
+  thumb ??= await makeThumb({ script, anime: main, scenes, dir, context }, log, signal); // la versión TikTok reutiliza la de YouTube
   // sonido: whoosh en los cortes con movimiento (no más de uno cada 3 s) y golpe en el clímax
   let last = -9;
   const whooshAt = motion.map((i) => slots[i].s).filter((t) => t > 0.5 && t - last >= 3 && (last = t));
   const sfx = await sfxTrack({ whooshAt, impactAt: slots[climax]?.s ?? null, total, dir }).catch(() => null);
   const final = path.join(dir, `${name}.mp4`);
-  // el primer fotograma es la miniatura (0,3 s: lo que se ve en búsquedas y en el perfil sin frenar el gancho)
+  // el primer fotograma es la miniatura: solo 2 fotogramas, para poder elegirla de portada sin que se vea una tarjeta
+  // fija al empezar (medido en TikTok: la gente se va en el segundo 0:01-0:02)
   await ff(['-f', 'concat', '-safe', '0', '-i', list, '-i', voice, '-loop', '1', '-t', String(total), '-i', thumb.small, ...(sfx ? ['-i', sfx] : []),
-    '-filter_complex', `[0:v]subtitles=${ass}:fontsdir=${FONTS}[v];[2:v]scale=${W}:${H}[t];[v][t]overlay=enable='lt(t,0.3)'[o]${sfx ? ';[3:a]volume=0.45[s];[1:a][s]amix=inputs=2:normalize=0:duration=first[a]' : ''}`,
+    '-filter_complex', `[0:v]subtitles=${ass}:fontsdir=${FONTS}[v];[2:v]scale=${W}:${H}[t];[v][t]overlay=enable='lt(t,0.066)'[o]${sfx ? ';[3:a]volume=0.45[s];[1:a][s]amix=inputs=2:normalize=0:duration=first[a]' : ''}`,
     '-map', '[o]', '-map', sfx ? '[a]' : '1:a',
     '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-t', String(total), '-movflags', '+faststart', final]);
   return { video: final, thumb };

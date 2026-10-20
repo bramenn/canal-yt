@@ -7,7 +7,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 # cifras de YouTube/TikTok (yt-dlp) y alineación de la voz (faster-whisper)
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir faster-whisper yt-dlp
-# IA: Claude Code (historias y guion) y, de respaldo, Codex CLI
+# IA: Codex CLI por defecto; Claude Code queda disponible como alternativa
 RUN npm install -g @anthropic-ai/claude-code @openai/codex && npm cache clean --force
 
 WORKDIR /app
