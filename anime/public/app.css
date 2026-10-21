@@ -171,6 +171,7 @@ a.stat:hover { border-color: var(--line2); background: #121417; }
 .stat.off { color: var(--faint); }
 .stat.off .logo { opacity: .45; }
 .stats .hint { font-size: 11.5px; }
+.stats .yt-detail { color: var(--text); font-size: 11.5px; line-height: 1.5; padding: 0 8px; }
 
 /* ---------- viralidad ---------- */
 .viral { font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }

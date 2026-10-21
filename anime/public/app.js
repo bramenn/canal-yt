@@ -121,8 +121,11 @@ function statsBox(p) {
     return `<a class="stat" href="${esc(x.url)}" target="_blank" rel="noopener" title="Abrir en ${name}">${LOGO[key]}
       <span class="n main">${ICON.views}<b>${nf(x.views)}</b>${d > 0 ? `<em>+${nf(d)}</em>` : ''}</span>${part('likes')}${part('comments')}</a>`;
   };
+  const a = s.youtube?.analytics;
+  const ytDetail = a?.lifetime ? `<small class="yt-detail" title="YouTube Analytics · datos disponibles hasta ${esc(a.through ?? 's/d')}">YouTube Studio (hasta ${esc(a.through ?? 's/d')}) · ${nf(a.lifetime.engagedViews)} vistas interesadas · ${a.lifetime.averageViewPercentage == null ? 's/d' : `${Number(a.lifetime.averageViewPercentage).toFixed(1)}% visto`} · ${a.lifetime.averageViewDuration == null ? 's/d' : `${Number(a.lifetime.averageViewDuration).toFixed(1)} s promedio`} · +${nf(a.lifetime.subscribersGained)} / −${nf(a.lifetime.subscribersLost)} subs</small>` : '';
+  const publicDetail = s.youtube?.public?.fetchedAt ? `<small class="hint">Cifras públicas de YouTube: ${ago(s.youtube.public.fetchedAt)}${!a?.lifetime ? ' · retención y suscriptores pendientes' : ''}</small>` : '';
   return `<div class="stats">${row('youtube', 'yt', 'YouTube')}${row('tiktok', 'tt', 'TikTok')}${row('facebook', 'fb', 'Facebook')}${row('instagram', 'ig', 'Instagram')}
-    <small class="hint">Actualizado ${ago(s.at)}</small></div>`;
+    ${ytDetail}${publicDetail}<small class="hint">Actualizado ${ago(s.at)}</small></div>`;
 }
 /** Bloque de la miniatura: vista pequeña, su texto y descargar 4K / YouTube / rehacer. */
 const thumbBox = (small, full, text, name, act) => (small ? `

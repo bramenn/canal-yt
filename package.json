@@ -9,6 +9,7 @@
     "futbol": "node --env-file-if-exists=.env futbol/server.js",
     "comic": "node --env-file-if-exists=.env comic/server.js",
     "anime": "node --env-file-if-exists=.env anime/server.js",
+    "youtube-auth": "node --env-file-if-exists=.env scripts/youtube-analytics-auth.js",
     "dinero": "node --env-file-if-exists=.env dinero/server.js",
     "user": "node --env-file-if-exists=.env scripts/user.js"
   },

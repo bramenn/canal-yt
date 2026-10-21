@@ -18,6 +18,8 @@ import { makeShort, makeTiktok, copyAbout } from './lib/make.js';
 import { writeComment } from '../lib/social.js';
 import { refreshStats } from '../lib/stats.js';
 import { virality, learnings } from '../lib/virality.js';
+import { youtubeAnalyticsMissingConfig } from '../lib/youtube-analytics.js';
+import { youtubeLearning } from './lib/youtube-learning.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // antes de cargar la voz: sus carpetas cuelgan de PROJECTS_DIR
@@ -36,11 +38,16 @@ if (!(await countUsers())) console.log('\n  ⚠️  No hay usuarios: crea el pri
 
 // lo aprendido de las cifras (qué funcionó y qué no) para la IA, sin repetir temas ni arranques
 const describe = (p) => ({ title: p.script?.title, hook: p.script?.lines?.[0]?.text, angle: `${p.story?.anime}: ${p.story?.angle}` });
-const learnFrom = async () => learnings(await listProjects(TABLE), describe);
+const learnFrom = async () => {
+  const projects = await listProjects(TABLE);
+  return youtubeLearning(projects, describe) ?? learnings(projects, describe);
+};
 const safeId = (id) => String(id).replace(/[^a-z0-9_-]/gi, '').slice(0, 80);
 // las dos voces del canal (biblioteca de ElevenLabs): se elige una al crear o rehacer
 const VOICES = { mujer: { id: 'ajOR9IDAaubDK5qtLUqQ', title: 'Mujer' }, hombre: { id: 'qRUgOhnxGASxirG4fKjv', title: 'Hombre (David)' } };
 const voiceOf = (key) => VOICES[key] ?? VOICES.hombre;
+const analyticsMissing = youtubeAnalyticsMissingConfig();
+if (analyticsMissing.length) console.log(`ℹ️ YouTube Analytics sin conectar; faltan ${analyticsMissing.join(', ')}.`);
 
 // cifras de YouTube, TikTok y Facebook: al arrancar (a los 2 min) y cada 30 min; una sola lectura a la vez
 let statsRun = null;
@@ -69,11 +76,13 @@ const task = (res, run) => sse(res, (emit) => {
 });
 
 /** Hace un short y lo guarda; si falla, lo cuenta y sigue (en automático no se para todo por uno). */
-async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date.now().toString(36), learn = '') {
+async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date.now().toString(36), learn = '', previous = null) {
   const v = voiceOf(voiceKey);
   emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
   const p = await makeShort({ id, story, voiceId: v.id, learn }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
   p.voice.title = v.title;
+  if (previous?.stats) p.stats = previous.stats;
+  if (previous?.created) p.created = previous.created;
   await saveProject(p, user.id, TABLE);
   emit({ type: 'short', project: p });
   return p;
@@ -126,7 +135,8 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
         const avoid = (await listProjects(TABLE)).map((x) => `${x.story?.anime}: ${x.story?.angle}`);
         log('🔎 Buscando las historias de anime con más gancho…');
         const learn = await learnFrom();
-        if (learn.includes('LO QUE NOS HA FUNCIONADO')) log('🧠 Aprendiendo de tus shorts que mejor funcionaron…');
+        if (learn.includes('APRENDIZAJE DE YOUTUBE ANALYTICS') || learn.includes('CONTEXTO PÚBLICO RECIENTE')) log('🧠 Usando Analytics y las señales públicas disponibles de tus Shorts…');
+        else if (learn.includes('LO QUE NOS HA FUNCIONADO')) log('🧠 Aprendiendo de tus shorts que mejor funcionaron…');
         const { stories, cost: c0 } = await findStories({ count: Math.min(5, Math.max(1, Number(count) || 3)), avoid, learn }, emit, track);
         log(`📰 ${stories.length} historias: ${stories.map((s) => s.anime).join(' · ')}`);
         let cost = c0, ok = 0;
@@ -144,7 +154,7 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       const old = await getProject(safeId(m[1]), TABLE);
       if (!old) return sendJSON(res, 404, { error: 'No existe' });
       const { voice } = await readBody(req);
-      return task(res, async (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id, await learnFrom()));
+      return task(res, async (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id, await learnFrom(), old));
     }
     // ---- cifras de las publicaciones (ahora mismo) ----
     if (p === '/api/stats' && req.method === 'POST') {
@@ -158,7 +168,8 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
         const dir = path.join(MEDIA, pj.id);
         const thumb = existsSync(path.join(dir, 'thumb.jpg')) ? { full: path.join(dir, 'thumb-4k.jpg'), small: path.join(dir, 'thumb.jpg') } : null;
         const voiceId = pj.voice?.voiceId ?? voiceOf('hombre').id;
-        const { tiktok, cost } = await makeTiktok({ id: pj.id, story: pj.story, voiceId, thumb }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
+        const learn = await learnFrom();
+        const { tiktok, cost } = await makeTiktok({ id: pj.id, story: pj.story, voiceId, thumb, learn }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
         pj.tiktok = tiktok;
         await saveProject(pj, user.id, TABLE);
         emit({ type: 'short', project: pj });
