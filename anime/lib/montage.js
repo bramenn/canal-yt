@@ -27,7 +27,7 @@ const clamp = (v, lo, hi, def) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi
 
 // ---------- fuentes ----------
 /** Escenas limpias de los tráileres/PV o escenas clave del anime en YouTube (vídeos hasta tener ~20, máx. 4; una vez por anime y proyecto). */
-async function trailer(query, dir, log, context = '', exact = false) {
+export async function trailer(query, dir, log, context = '', exact = false) {
   const slug = norm(query).slice(0, 40) || 'anime';
   // Cambia el nombre cuando cambia el criterio visual: v4 añade focusX/focusY y layout ('full'|'card').
   const scenesFile = path.join(dir, `tr-${slug}-cat-v4.json`);
@@ -86,7 +86,7 @@ async function trailer(query, dir, log, context = '', exact = false) {
 }
 
 /** La imagen principal (og:image) de cada noticia de la historia: suele ser justo lo que se cuenta (el post, la foto, el anuncio). */
-async function newsImages(urls = [], dir) {
+export async function newsImages(urls = [], dir) {
   const out = [];
   for (const [k, u] of urls.slice(0, 4).entries()) {
     try {
@@ -200,7 +200,7 @@ En "bad" las que NO sirven: texto grande o en el centro (títulos, créditos, fe
  * debe mostrarse a pantalla completa ('full', recortada en focusX/focusY) o en encuadre completo ('card', sobre
  * fondo desenfocado para no amputar los lados cuando es una foto horizontal de una persona, entrevista, grupo o noticia).
  */
-async function catalogImages(items, context, dir, log) {
+export async function catalogImages(items, context, dir, log) {
   if (!items.length) return [];
   const valid = [];
   for (const it of items) {
@@ -269,7 +269,7 @@ Para CADA imagen (1-${batch.length}) devuelve en "photos":
 
 // ---------- tiempos ----------
 /** Inicio y fin de cada frase del guion a partir de las palabras alineadas (con re-sincronización si Whisper parte o une una palabra). */
-function lineTimes(lines, words, total) {
+export function lineTimes(lines, words, total) {
   let k = 0;
   return lines.map((l, i) => {
     const tokens = String(l.text).split(/\s+/).map(norm).filter(Boolean);

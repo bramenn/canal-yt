@@ -179,3 +179,17 @@ a.stat:hover { border-color: var(--line2); background: #121417; }
 .viral.up { color: #86efac; border-color: rgba(34, 197, 94, .4); }
 .viral.stuck { color: var(--faint); }
 .viral.normal { color: var(--dim); font-weight: 500; }
+
+/* ---------- pestañas y vídeos largos 16:9 ---------- */
+.tabs { display: flex; justify-content: center; gap: 10px; margin: 4px auto 20px; }
+.tab { font-weight: 700; font-size: 14.5px; padding: 9px 18px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--dim); }
+.tab.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.long-controls { display: grid; gap: 12px; max-width: 680px; margin: 0 auto; }
+.long-controls input { background: var(--panel); border: 1px solid var(--line2); font-size: 15px; padding: 11px 14px; border-radius: 10px; }
+.longs { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 20px; }
+.short.long video { aspect-ratio: 16 / 9; }
+.short.long .thumb-box img { width: 96px; aspect-ratio: 16 / 9; }
+.chapters-list { font-size: 12.5px; color: var(--dim); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; white-space: pre-line; line-height: 1.45; }
+@media (max-width: 760px) {
+  .longs { grid-template-columns: 1fr; }
+}

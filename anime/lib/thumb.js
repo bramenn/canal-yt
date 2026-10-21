@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { run } from '../../lib/ytdlp.js';
 import { generateImage } from '../../lib/codeximage.js';
-import { composeThumb } from '../../lib/thumbnail.js';
+import { composeThumb, composeThumb16x9 } from '../../lib/thumbnail.js';
 import { claudeStep } from '../../lib/claude.js';
 import { dhash } from '../../lib/editor.js';
 
@@ -122,4 +122,64 @@ export async function firstFrame(video, thumb) {
   await ff(['-i', video, '-loop', '1', '-t', '1', '-i', thumb, '-filter_complex', "[1:v]scale=1080:1920[t];[0:v][t]overlay=enable='lt(t,0.066)':eof_action=pass[o]",
     '-map', '[o]', '-map', '0:a', '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'copy', '-movflags', '+faststart', tmp]);
   await rename(tmp, video);
+}
+
+const prompt16x9 = (anime, script, context, direction, history) => `Genera UNA imagen con tu herramienta integrada de generación de imágenes (image_gen) en formato HORIZONTAL panorámico 3:2 (1536×1024). No uses scripts ni pidas OPENAI_API_KEY. No escribas código.
+
+Diseña una MINIATURA HORIZONTAL 16:9 de YouTube para un vídeo largo de anime. La imagen adjunta (${anime}) sirve SOLO para la identidad y el estilo del personaje; NO copies su pose, encuadre ni fondo.
+HISTORIA: ${context || script.title}
+TEXTO QUE PONDREMOS DESPUÉS A LA IZQUIERDA: ${script.thumb_text || script.title}
+IDEA VISUAL: ${direction}
+- Sitúa al personaje o personajes protagonistas y la acción principal en los DOS TERCIOS DERECHOS de la imagen (x entre el 38 % y el 96 % del ancho), con expresión intensa, nítida y reconocible.
+- ZONA DE TÍTULO OBLIGATORIA A LA IZQUIERDA: el TERCIO IZQUIERDO (el 36 % izquierdo del ancho) debe quedar como fondo oscuro, atmosférico y despejado (cielo nocturno, energía oscura o desenfoque profundo, sin caras, cabezas ni manos), porque ahí se superpondrá el titular gigante.
+- Colores muy vivos y saturados (naranjas, amarillos, turquesas), alto contraste, contorno limpio y halo de luz que separe al personaje del fondo.
+- Sin NINGÚN texto, letra, número, logo ni marca de agua.
+COMPOSICIONES YA USADAS QUE DEBES EVITAR: ${history.map((h) => h.direction).filter(Boolean).slice(-20).join(' · ') || 'retratos genéricos centrados'}.
+Cuando la imagen esté generada, responde solo: listo.`;
+
+export async function makeThumb16x9(options, log = () => {}, signal) {
+  const previous = queue;
+  let release;
+  queue = new Promise((resolve) => { release = resolve; });
+  await previous;
+  try { signal?.throwIfAborted(); return await createThumb16x9(options, log, signal); }
+  finally { release(); }
+}
+
+async function createThumb16x9({ script, anime, scenes, dir, context = '' }, log, signal) {
+  const history = await previousCovers(dir);
+  const candidates = await Promise.all(scenes.map(async (s) => ({ ...s, hash: s.hash || await dhash(s.file, (s.s + s.e) / 2) })));
+  const fresh = freshScenes(candidates, history);
+  const pool = fresh.length ? fresh : candidates;
+  const ranked = pool.sort((a, b) => (a.thumb ?? 99) - (b.thumb ?? 99));
+  let best = ranked[0];
+  if (!best) throw new Error('Sin escenas para la miniatura 16:9');
+  let direction = `Composición horizontal 16:9 con el protagonista de ${anime} en el lado derecho mostrando ${context || script.title} y el tercio izquierdo oscuro y despejado para el titular.`;
+  const choices = ranked.slice(0, 24);
+  const ev = await claudeStep({
+    prompt: `Elige una referencia de personaje para la miniatura horizontal 16:9 de YouTube de ESTE vídeo largo: ${context || script.title}.\nTexto en portada: ${script.thumb_text}.\nReferencias disponibles: ${JSON.stringify(choices.map((s, i) => ({ n: i, who: s.who, desc: s.desc, shot: s.shot })))}\nDevuelve index (índice de referencia) y direction (composición horizontal 16:9 concreta con el personaje/acción en los dos tercios derechos y el tercio izquierdo oscuro y despejado, sin texto).`,
+    schema: { type: 'object', properties: { index: { type: 'integer', minimum: 0, maximum: choices.length - 1 }, direction: { type: 'string' } }, required: ['index', 'direction'] },
+    system: 'Eres director de arte de miniaturas horizontales de YouTube de anime.', model: 'sonnet', effort: 'low', tools: [],
+  }, () => {}, () => {}).catch(() => null);
+  if (ev && choices[ev.data?.index]) { best = choices[ev.data.index]; direction = ev.data.direction || direction; }
+  signal?.throwIfAborted();
+  const work = await mkdtemp(path.join(dir, '.thumb16x9-next-'));
+  try {
+    const frame = path.join(work, 'thumb-frame.png');
+    await ff(['-ss', String((best.s + best.e) / 2), '-i', best.file, '-frames:v', '1', frame]);
+    let art = frame;
+    log('🖼 Miniatura 16:9: generando arte panorámico con Codex…');
+    try {
+      const gen = await generateImage({ prompt: prompt16x9(anime, script, context, direction, history), ref: frame }, signal);
+      art = path.join(work, `thumb-art${path.extname(gen) || '.png'}`);
+      await copyFile(gen, art);
+    } catch (e) { signal?.throwIfAborted(); log(`⚠️ Codex no pudo (${e.message.slice(0, 120)}): uso fotograma del tráiler`); }
+    await composeThumb16x9({ art, text: script.thumb_text || script.title, word: script.thumb_word, dir: work }, log);
+    signal?.throwIfAborted();
+    const own = history.find((h) => h.id === path.basename(dir));
+    const usedFrameHashes = [...new Set([...(own?.usedFrameHashes || []), own?.frameHash, best.hash].filter(Boolean))];
+    await writeFile(path.join(work, 'thumb-selection.json'), JSON.stringify({ title: script.title, direction, frameHash: best.hash, usedFrameHashes, artHash: await fingerprint(art), at: Date.now() }, null, 2));
+    for (const file of await readdir(work)) await rename(path.join(work, file), path.join(dir, file));
+    return { full: path.join(dir, 'thumb-4k.jpg'), small: path.join(dir, 'thumb.jpg') };
+  } finally { await rm(work, { recursive: true, force: true }); }
 }

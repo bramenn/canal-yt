@@ -21,19 +21,43 @@
   </header>
 
   <main>
-    <section class="hero">
-      <h1>Shorts de anime en automático</h1>
-      <p class="lead">La IA busca las noticias y curiosidades de anime con más gancho, escribe el guion al estilo AniDosis, pone la voz que elijas (hombre o mujer) y monta el vídeo vertical con escenas de los tráileres oficiales y subtítulos. Marca: @notianimes.</p>
-      <div class="auto">
-        <select id="count"><option value="1">1 short</option><option value="3" selected>3 shorts</option><option value="5">5 shorts</option></select>
-        <select id="voice-pick" title="Voz del narrador"><option value="hombre">🎙 Voz de hombre</option><option value="mujer">🎙 Voz de mujer</option></select>
-        <button id="auto" class="primary big">🍥 Crear shorts de hoy</button>
-        <button id="stats" title="Vistas, likes y comentarios de YouTube, TikTok y Facebook (se actualizan solas cada 30 min)">📊 Actualizar cifras</button>
-      </div>
-      <p class="hint" style="margin-top:10px">Shorts de 40-50 s. Cada uno tarda unos 4-7 min (buscar, voz, tráileres, montaje y miniatura).</p>
-    </section>
-    <div class="list-head"><h2>Mis shorts</h2></div>
-    <div id="shorts" class="shorts"></div>
+    <nav class="tabs" aria-label="Formato de vídeo">
+      <button type="button" class="tab active" data-tab="shorts">📱 Shorts (9:16)</button>
+      <button type="button" class="tab" data-tab="long">🎬 Vídeos largos 16:9 (8-10 min)</button>
+    </nav>
+
+    <div id="view-shorts">
+      <section class="hero">
+        <h1>Shorts de anime en automático</h1>
+        <p class="lead">La IA busca las noticias y curiosidades de anime con más gancho, escribe el guion al estilo AniDosis, pone la voz que elijas (hombre o mujer) y monta el vídeo vertical con escenas de los tráileres oficiales y subtítulos. Marca: @notianimes.</p>
+        <div class="auto">
+          <select id="count"><option value="1">1 short</option><option value="3" selected>3 shorts</option><option value="5">5 shorts</option></select>
+          <select id="voice-pick" title="Voz del narrador"><option value="hombre">🎙 Voz de hombre</option><option value="mujer">🎙 Voz de mujer</option></select>
+          <button id="auto" class="primary big">🍥 Crear shorts de hoy</button>
+          <button id="stats" title="Vistas, likes y comentarios de YouTube, TikTok y Facebook (se actualizan solas cada 30 min)">📊 Actualizar cifras</button>
+        </div>
+        <p class="hint" style="margin-top:10px">Shorts de 40-50 s. Cada uno tarda unos 4-7 min (buscar, voz, tráileres, montaje y miniatura).</p>
+      </section>
+      <div class="list-head"><h2>Mis shorts</h2></div>
+      <div id="shorts" class="shorts"></div>
+    </div>
+
+    <div id="view-long" hidden>
+      <section class="hero">
+        <h1>Vídeos largos 16:9 por capítulos</h1>
+        <p class="lead">Vídeos horizontales (1920×1080) de 8 a 10 minutos estructurados en introducción + 6 capítulos con tarjetas animadas, música ambiental con ducking, miniatura 16:9 y marcas de tiempo automáticas para acumular las 4.000 h de YouTube y activar anuncios mid-roll.</p>
+        <div class="long-controls">
+          <input id="long-topic" type="text" placeholder="Tema o anime opcional (p. ej. Dragon Ball: 6 técnicas olvidadas de Goku). Déjalo vacío para elección automática." />
+          <div class="auto">
+            <select id="long-voice-pick" title="Voz del narrador"><option value="hombre">🎙 Voz de hombre</option><option value="mujer">🎙 Voz de mujer</option></select>
+            <button id="make-long" class="primary big">🎬 Crear vídeo largo (8-10 min)</button>
+          </div>
+        </div>
+        <p class="hint" style="margin-top:10px">Duración garantizada &gt; 8 min (6 capítulos con escenas 16:9, Cinema Card, cama musical y marcas de tiempo en descripción).</p>
+      </section>
+      <div class="list-head"><h2>Mis vídeos largos (16:9)</h2></div>
+      <div id="longs" class="longs"></div>
+    </div>
   </main>
 
   <dialog id="ask" class="dlg small">

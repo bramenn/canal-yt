@@ -155,34 +155,56 @@ function commentBox(p) {
 }
 
 const mediaURL = (url, p) => url ? `${url.split('?')[0]}?v=${p.thumbRevision ?? p.updated ?? ''}` : url;
-function render() {
-  $('#shorts').innerHTML = list.length ? list.map((p) => `
-    <div class="short" data-id="${p.id}">
+const fmtDur = (sec = 0) => {
+  const s = Math.max(0, Math.round(sec));
+  return s >= 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} min` : `${s} s`;
+};
+const chaptersBox = (p) => {
+  if (!p.chaptersTimeline?.length) return '';
+  const lines = p.chaptersTimeline.map((c) => {
+    const s = Math.max(0, Math.floor(c.start || 0));
+    const ts = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    return `${ts} · ${c.number > 0 ? `${c.number}. ${c.heading} (${c.anime})` : c.heading}`;
+  }).join('\n');
+  return `<details class="hint" open><summary>📌 Capítulos (${p.chaptersTimeline.filter((c) => c.number > 0).length})</summary><div class="chapters-list">${esc(lines)}</div></details>`;
+};
+
+function renderCard(p) {
+  const isLong = p.kind === 'long';
+  return `
+    <div class="short${isLong ? ' long' : ''}" data-id="${p.id}">
       <video src="${esc(mediaURL(p.video, p))}" ${p.thumbSmall ? `poster="${esc(mediaURL(p.thumbSmall, p))}"` : ''} controls preload="metadata" playsinline></video>
       <div class="body">
         <div class="title">${esc(p.script?.title)}</div>
         <div class="hint">${esc(p.story?.anime)} · ${esc(p.story?.angle)}${p.voice?.title ? ` · 🎙 ${esc(p.voice.title)}` : ''}</div>
         <div class="row wrap">
-          <a class="btn primary" href="${esc(mediaURL(p.video, p))}" download="${esc(slug(p.script?.title ?? p.id))}-youtube.mp4" title="Para YouTube Shorts">⬇ YouTube${p.duration ? ` · ${p.duration} s` : ''}</a>
-          ${p.tiktok ? `<a class="btn primary" href="${esc(mediaURL(p.tiktok.video, p))}" download="${esc(slug(p.script?.title ?? p.id))}-tiktok.mp4" title="Más de 1 minuto: entra en el programa de pagos de TikTok">⬇ TikTok · ${p.tiktok.duration} s</a>`
-    : '<button data-act="tiktok" title="Versión de más de 1 minuto para poder monetizar en TikTok">🎵 Hacer versión TikTok</button>'}
-          <button data-act="copy-yt" title="Título, descripción con pregunta y hashtags para YouTube Shorts">📋 YouTube</button>
-          <button data-act="copy-tt" title="Texto con palabras clave, pregunta y hashtags para TikTok">📋 TikTok</button>
-          <button data-act="copy-ig" title="Texto para el reel de Instagram (sube aquí el vídeo de YouTube): tu mejor red">📋 Instagram</button>
+          <a class="btn primary" href="${esc(mediaURL(p.video, p))}" download="${esc(slug(p.script?.title ?? p.id))}-${isLong ? 'youtube-16x9' : 'youtube'}.mp4" title="${isLong ? 'Vídeo largo 16:9 para YouTube' : 'Para YouTube Shorts'}">⬇ YouTube${p.duration ? ` · ${fmtDur(p.duration)}` : ''}</a>
+          ${isLong ? '' : (p.tiktok ? `<a class="btn primary" href="${esc(mediaURL(p.tiktok.video, p))}" download="${esc(slug(p.script?.title ?? p.id))}-tiktok.mp4" title="Más de 1 minuto: entra en el programa de pagos de TikTok">⬇ TikTok · ${p.tiktok.duration} s</a>`
+    : '<button data-act="tiktok" title="Versión de más de 1 minuto para poder monetizar en TikTok">🎵 Hacer versión TikTok</button>')}
+          <button data-act="copy-yt" title="Título, descripción${isLong ? ' con capítulos (00:00)' : ' con pregunta'} y hashtags para YouTube">📋 YouTube</button>
+          ${isLong ? '' : '<button data-act="copy-tt" title="Texto con palabras clave, pregunta y hashtags para TikTok">📋 TikTok</button><button data-act="copy-ig" title="Texto para el reel de Instagram (sube aquí el vídeo de YouTube): tu mejor red">📋 Instagram</button>'}
           <button data-act="remount" title="Re-montar solo el vídeo manteniendo el mismo guion, voz y miniatura">🎬 Re-montar</button>
           <button data-act="remake" title="Guion, voz y montaje nuevos (con la voz elegida arriba)">🔄 Rehacer</button>
           <button data-act="del" class="danger" title="Borrar">🗑</button>
         </div>
+        ${isLong ? chaptersBox(p) : ''}
         ${commentBox(p)}
         ${p.viral?.level ? `<div class="viral ${p.viral.level}" title="Comparado con la mediana de tus shorts a la misma edad · ${p.viral.perHour ?? 0} vistas/h ahora">${esc(p.viral.label)}</div>` : ''}
         ${statsBox(p)}
         ${thumbBox(mediaURL(p.thumbSmall, p), mediaURL(p.thumb, p), p.script?.thumb_text, slug(p.script?.title ?? p.id), 'thumb')}
         ${p.story?.sources?.length ? `<details class="hint"><summary>Fuentes</summary>${p.story.sources.map((u) => `<div><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></div>`).join('')}</details>` : ''}
       </div>
-    </div>`).join('') : '<div class="empty">Aún no hay shorts. Pulsa «Crear shorts de hoy».</div>';
+    </div>`;
 }
 
-$('#shorts').onclick = async (e) => {
+function render() {
+  const shortsList = list.filter((p) => p.kind !== 'long');
+  const longsList = list.filter((p) => p.kind === 'long');
+  $('#shorts').innerHTML = shortsList.length ? shortsList.map(renderCard).join('') : '<div class="empty">Aún no hay shorts. Pulsa «Crear shorts de hoy».</div>';
+  if ($('#longs')) $('#longs').innerHTML = longsList.length ? longsList.map(renderCard).join('') : '<div class="empty">Aún no hay vídeos largos 16:9. Pulsa «Crear vídeo largo (8-10 min)».</div>';
+}
+
+const onCardClick = async (e) => {
   const card = e.target.closest('.short');
   const act = e.target.closest('[data-act]')?.dataset.act;
   if (!card || !act) return;
@@ -203,20 +225,34 @@ $('#shorts').onclick = async (e) => {
   if (act === 'copy-yt' || act === 'copy-tt' || act === 'copy-ig') {
     const yt = act === 'copy-yt';
     await navigator.clipboard.writeText(p.script.copy ? copyText(yt ? 'youtube' : 'tiktok', p.script.copy) : oldText(p));
-    // Instagram usa el texto de TikTok (corto, con pregunta y 3-5 hashtags: lo mismo que pide un reel)
     toast(`Texto para ${yt ? 'YouTube' : act === 'copy-ig' ? 'Instagram' : 'TikTok'} copiado`, 'ok');
   }
   if (act === 'tiktok') runTask(`Versión TikTok de «${p.story.anime}»`, async (ui) => { const ev = await streamTo(ui, `/api/tiktok/${p.id}`, {}); return `Versión TikTok lista (${ev.data.duration} s)`; });
-  if (act === 'thumb') runTask(`Miniatura de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/thumb/${p.id}`, {}); return 'Miniatura lista: ya es el primer fotograma del vídeo'; });
+  if (act === 'thumb') runTask(`Miniatura de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/thumb/${p.id}`, {}); return p.kind === 'long' ? 'Miniatura 16:9 lista' : 'Miniatura lista: ya es el primer fotograma del vídeo'; });
   if (act === 'remount') runTask(`Re-montando vídeo de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remount/${p.id}`, {}); return 'Vídeo re-montado con el mismo guion y voz'; });
-  if (act === 'remake') runTask(`Rehaciendo «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remake/${p.id}`, { voice: $('#voice-pick').value }); return 'Short rehecho'; });
+  if (act === 'remake') {
+    const voice = p.kind === 'long' ? ($('#long-voice-pick')?.value || $('#voice-pick').value) : $('#voice-pick').value;
+    runTask(`Rehaciendo «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remake/${p.id}`, { voice }); return p.kind === 'long' ? 'Vídeo largo rehecho' : 'Short rehecho'; });
+  }
   if (act === 'del') {
-    if (!(await ask({ title: '¿Borrar este short?', text: 'Se mueve a la papelera (recuperable desde la base de datos).', ok: 'Borrar', danger: true }))) return;
+    if (!(await ask({ title: p.kind === 'long' ? '¿Borrar este vídeo largo?' : '¿Borrar este short?', text: 'Se mueve a la papelera (recuperable desde la base de datos).', ok: 'Borrar', danger: true }))) return;
     await fetch(`/api/projects/${p.id}`, { method: 'DELETE' });
     list = list.filter((x) => x.id !== p.id);
     render();
   }
 };
+$('#shorts').onclick = onCardClick;
+if ($('#longs')) $('#longs').onclick = onCardClick;
+
+// Pestañas Shorts / Vídeos largos
+document.querySelectorAll('.tab[data-tab]').forEach((btn) => {
+  btn.onclick = () => {
+    const tab = btn.dataset.tab;
+    document.querySelectorAll('.tab[data-tab]').forEach((b) => b.classList.toggle('active', b === btn));
+    $('#view-shorts').hidden = tab !== 'shorts';
+    $('#view-long').hidden = tab !== 'long';
+  };
+});
 
 $('#auto').onclick = () => {
   const count = Number($('#count').value);
@@ -226,6 +262,18 @@ $('#auto').onclick = () => {
     return `${ev.data.made} short${ev.data.made === 1 ? '' : 's'} listo${ev.data.made === 1 ? '' : 's'}`;
   });
 };
+
+if ($('#make-long')) {
+  $('#make-long').onclick = () => {
+    const topic = $('#long-topic')?.value.trim() || '';
+    const voice = $('#long-voice-pick')?.value || $('#voice-pick').value;
+    runTask('Creando vídeo largo 16:9 (8-10 min)', async (ui) => {
+      ui.step('Plan de 6 capítulos → guion y voz por bloque → montaje 16:9 → miniatura y capítulos');
+      const ev = await streamTo(ui, '/api/long', { topic, voice });
+      return `Vídeo largo listo (${fmtDur(ev.data.duration)})`;
+    });
+  };
+}
 
 $('#stats').onclick = () => runTask('Leyendo las cifras de YouTube, TikTok y Facebook', async (ui) => {
   const ev = await streamTo(ui, '/api/stats', {});
@@ -243,5 +291,15 @@ $('#me').textContent = `👤 ${me.username}`;
 list = sortByCreated(shorts);
 render();
 // la última voz elegida se recuerda en este navegador
-try { $('#voice-pick').value = localStorage.getItem('anime.voice') || 'hombre'; } catch {}
-$('#voice-pick').onchange = (e) => { try { localStorage.setItem('anime.voice', e.target.value); } catch {} };
+try {
+  const savedVoice = localStorage.getItem('anime.voice') || 'hombre';
+  $('#voice-pick').value = savedVoice;
+  if ($('#long-voice-pick')) $('#long-voice-pick').value = savedVoice;
+} catch {}
+const syncVoice = (e) => {
+  try { localStorage.setItem('anime.voice', e.target.value); } catch {}
+  $('#voice-pick').value = e.target.value;
+  if ($('#long-voice-pick')) $('#long-voice-pick').value = e.target.value;
+};
+$('#voice-pick').onchange = syncVoice;
+if ($('#long-voice-pick')) $('#long-voice-pick').onchange = syncVoice;

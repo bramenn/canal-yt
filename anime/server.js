@@ -12,9 +12,10 @@ import { migrate, listProjects, getProject, saveProject, deleteProject, q } from
 import { countUsers } from '../lib/auth.js';
 import { gate, serveFrom } from '../lib/web.js';
 import { findStories, thumbText } from './lib/story.js';
-import { makeThumb, firstFrame } from './lib/thumb.js';
+import { makeThumb, makeThumb16x9, firstFrame } from './lib/thumb.js';
 import { readdir, readFile, writeFile, appendFile, unlink } from 'node:fs/promises';
 import { makeShort, makeTiktok, copyAbout, remountProject } from './lib/make.js';
+import { makeLong, remountLong, resumeLong } from './lib/long.js';
 import { writeComment } from '../lib/social.js';
 import { refreshStats } from '../lib/stats.js';
 import { virality, learnings } from '../lib/virality.js';
@@ -80,6 +81,19 @@ setInterval(async () => {
     await writeFile(REMOUNT_LOG, `[${new Date().toISOString()}] Iniciando re-montaje de ${ids.length} shorts: ${ids.join(', ')}\n`).catch(() => {});
     for (const id of ids) {
       try {
+        // «long:<id>» reanuda un vídeo largo que falló en el montaje, desde su borrador (guion y voces ya hechos)
+        if (String(id).startsWith('long:')) {
+          const lid = safeId(String(id).slice(5));
+          await logLine(`━━ Reanudando vídeo largo ${lid} desde su borrador…`);
+          const prev = await getProject(lid, TABLE);
+          const pj = await resumeLong(lid, { tts, aligner, mediaDir: MEDIA }, (ev) => { if (ev.type === 'log') logLine(ev.text); }, () => {});
+          pj.voice.title = 'Hombre (David)';
+          if (prev?.stats) pj.stats = prev.stats;
+          if (prev?.created) pj.created = prev.created;
+          await saveProject(pj, null, TABLE);
+          await logLine(`✅ ${lid} completado (${pj.duration}s)`);
+          continue;
+        }
         const pj = await getProject(safeId(id), TABLE);
         if (!pj) { await logLine(`⚠️ ${id}: no existe en DB`); continue; }
         await logLine(`━━ Re-montando ${id} (${pj.story?.anime})…`);
@@ -185,11 +199,39 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
         return { made: ok, cost };
       });
     }
-    // ---- rehacer un short (misma historia, guion y montaje nuevos) ----
+    // ---- vídeo largo horizontal 16:9 (8-10 min por capítulos) ----
+    if (p === '/api/long' && req.method === 'POST') {
+      const { topic = '', voice } = await readBody(req);
+      return task(res, async (emit, track, signal) => {
+        const v = voiceOf(voice);
+        emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
+        const avoid = (await listProjects(TABLE)).map((x) => `${x.story?.anime}: ${x.story?.angle}`);
+        const learn = await learnFrom();
+        const pj = await makeLong({ id: `${Date.now().toString(36)}L`, topic, voiceId: v.id, learn, avoid }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
+        pj.voice.title = v.title;
+        await saveProject(pj, user.id, TABLE);
+        emit({ type: 'short', project: pj });
+        return { id: pj.id, duration: pj.duration, cost: pj.cost };
+      });
+    }
+    // ---- rehacer un short o vídeo largo (misma historia/tema, guion y montaje nuevos) ----
     if ((m = p.match(/^\/api\/remake\/([\w-]+)$/)) && req.method === 'POST') {
       const old = await getProject(safeId(m[1]), TABLE);
       if (!old) return sendJSON(res, 404, { error: 'No existe' });
       const { voice } = await readBody(req);
+      if (old.kind === 'long') {
+        return task(res, async (emit, track, signal) => {
+          const v = voiceOf(voice);
+          emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
+          const pj = await makeLong({ id: old.id, topic: `${old.story?.anime}: ${old.story?.angle}`, voiceId: v.id, learn: await learnFrom() }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
+          pj.voice.title = v.title;
+          if (old.stats) pj.stats = old.stats;
+          if (old.created) pj.created = old.created;
+          await saveProject(pj, user.id, TABLE);
+          emit({ type: 'short', project: pj });
+          return pj;
+        });
+      }
       return task(res, async (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id, await learnFrom(), old));
     }
     // ---- re-montar solo el vídeo (mismo guion, mismo audio y misma miniatura) ----
@@ -197,7 +239,8 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       const pj = await getProject(safeId(m[1]), TABLE);
       if (!pj) return sendJSON(res, 404, { error: 'No existe' });
       return task(res, async (emit, _track, signal) => {
-        await remountProject(pj, { tts, aligner, mediaDir: MEDIA }, (text) => emit({ type: 'log', text }), signal);
+        if (pj.kind === 'long') await remountLong(pj, { tts, aligner, mediaDir: MEDIA }, (text) => emit({ type: 'log', text }), signal);
+        else await remountProject(pj, { tts, aligner, mediaDir: MEDIA }, (text) => emit({ type: 'log', text }), signal);
         pj.thumbRevision = Date.now();
         await saveProject(pj, user.id, TABLE);
         emit({ type: 'short', project: pj });
@@ -235,13 +278,18 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
         log(`🖼 Texto de la miniatura: «${pj.script.thumb_text}»`);
         const main = pj.script.lines.find((l) => l.show === 'anime')?.query ?? pj.story.anime;
         const catalogs = (await readdir(dir)).filter((f) => /^tr-.*-cat-v[34]\.json$/.test(f));
+        const fallbackVideo = path.join(dir, pj.kind === 'long' ? 'long.mp4' : 'short.mp4');
         const scenes = catalogs.length ? (await Promise.all(catalogs.map(async (f) => JSON.parse(await readFile(path.join(dir, f), 'utf8'))))).flat()
-          : [{ file: path.join(dir, 'short.mp4'), s: 1, e: 3 }];
+          : [{ file: fallbackVideo, s: 1, e: 3 }];
         const context = `${pj.story.anime}: ${pj.story.angle}. ${pj.story.facts}`;
-        const thumb = await makeThumb({ script: pj.script, anime: main, scenes, dir, context }, log, signal);
-        log('🎬 Poniéndola como primer fotograma del vídeo…');
-        await firstFrame(path.join(dir, 'short.mp4'), thumb.small);
-        if (pj.tiktok?.video && existsSync(path.join(dir, 'tiktok.mp4'))) await firstFrame(path.join(dir, 'tiktok.mp4'), thumb.small);
+        if (pj.kind === 'long') {
+          await makeThumb16x9({ script: pj.script, anime: main, scenes, dir, context }, log, signal);
+        } else {
+          const thumb = await makeThumb({ script: pj.script, anime: main, scenes, dir, context }, log, signal);
+          log('🎬 Poniéndola como primer fotograma del vídeo…');
+          await firstFrame(path.join(dir, 'short.mp4'), thumb.small);
+          if (pj.tiktok?.video && existsSync(path.join(dir, 'tiktok.mp4'))) await firstFrame(path.join(dir, 'tiktok.mp4'), thumb.small);
+        }
         const revision = Date.now();
         // No sobrescribir las estadísticas que se hayan actualizado durante la generación.
         const { rows } = await q(`UPDATE animes SET data = jsonb_set(jsonb_set(data || $2::jsonb,
