@@ -66,11 +66,13 @@ const task = (res, run) => sse(res, (emit) => {
 });
 
 /** Hace un short y lo guarda; si falla, lo cuenta y sigue (en automático no se para todo por uno). */
-async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date.now().toString(36), learn = '') {
+async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date.now().toString(36), learn = '', previous = null) {
   const v = voiceOf(voiceKey);
   emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
   const p = await makeShort({ id, story, voiceId: v.id, learn }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
   p.voice.title = v.title;
+  if (previous?.stats) p.stats = previous.stats;
+  if (previous?.created) p.created = previous.created;
   await saveProject(p, user.id, TABLE);
   emit({ type: 'short', project: p });
   return p;
@@ -115,7 +117,7 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       const old = await getProject(safeId(m[1]), TABLE);
       if (!old) return sendJSON(res, 404, { error: 'No existe' });
       const { voice } = await readBody(req);
-      return task(res, async (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id, await learnFrom()));
+      return task(res, async (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id, await learnFrom(), old));
     }
     // ---- cifras de las publicaciones (ahora mismo) ----
     if (p === '/api/stats' && req.method === 'POST') {

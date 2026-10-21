@@ -14,6 +14,7 @@ window.fetch = async (...args) => {
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const slug = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 60) || 'short';
+const sortByCreated = (arr) => [...arr].sort((a, b) => (b.created ?? b.updated ?? 0) - (a.created ?? a.updated ?? 0));
 let list = [];
 
 // ================= avisos, preguntas y tareas =================
@@ -86,10 +87,10 @@ async function runTask(title, fn) {
   try { const msg = await fn(ui); ui.ok(msg || 'Listo'); return true; }
   catch (e) { ui.fail(ui.signal.aborted ? 'Cancelado' : `No se pudo: ${e.message}`); return null; }
 }
-// cada short que termina aparece al momento en la lista
+// cada short que termina aparece al momento en la lista manteniendo el orden por fecha de generación
 const streamTo = (ui, url, body) => stream(url, body, (e) => {
   if (e.type === 'log' || e.type === 'text') ui.add(e.text);
-  if (e.type === 'short') { list = [e.project, ...list.filter((x) => x.id !== e.project.id)]; render(); }
+  if (e.type === 'short') { list = sortByCreated([e.project, ...list.filter((x) => x.id !== e.project.id)]); render(); }
 }, ui.signal);
 
 // ================= shorts =================
@@ -194,7 +195,7 @@ $('#auto').onclick = () => {
 
 $('#stats').onclick = () => runTask('Leyendo las cifras de YouTube, TikTok y Facebook', async (ui) => {
   const ev = await streamTo(ui, '/api/stats', {});
-  list = await getJSON('/api/projects');
+  list = sortByCreated(await getJSON('/api/projects'));
   render();
   return `${ev.data.found} short${ev.data.found === 1 ? '' : 's'} con cifras`;
 });
@@ -205,7 +206,7 @@ $('#logout').onclick = async () => { await postJSON('/api/logout', {}).catch(() 
 const [me, shorts, ai] = await Promise.all([getJSON('/api/me'), getJSON('/api/projects').catch(() => []), getJSON('/api/ai-status').catch(() => null)]);
 $('#ai-engine').textContent = ai ? `IA: ${ai.engine === 'codex' ? 'Codex' : ai.engine === 'claude' ? 'Claude' : 'Automático'}` : '';
 $('#me').textContent = `👤 ${me.username}`;
-list = shorts;
+list = sortByCreated(shorts);
 render();
 // la última voz elegida se recuerda en este navegador
 try { $('#voice-pick').value = localStorage.getItem('dinero.voice') || 'hombre'; } catch {}

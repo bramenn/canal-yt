@@ -11,7 +11,7 @@ import { run, ytdlp, search } from '../../lib/ytdlp.js';
 import { downloadImages as images } from '../../lib/brave.js';
 import { claudeStep } from '../../lib/claude.js';
 import { pickRelevant } from '../../lib/imagepick.js';
-import { cutSlots, planEdit, reviewEdit, sfxTrack, dhash, groupTakes, enforce } from '../../lib/editor.js';
+import { cutSlots, planEdit, reviewEdit, planTransitions, applyPairTransitions, sfxTrack, dhash, groupTakes, enforce } from '../../lib/editor.js';
 import { FONTS } from '../../lib/thumbnail.js';
 import { W, H, wordEvents, assDoc } from '../../lib/subs.js';
 import { makeThumb } from './thumb.js';
@@ -23,39 +23,64 @@ const REACTION = /react|reacci|reaccion|analysis|análisis|analisis|explained|re
 const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], timeout);
 const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ]/g, '');
 
+const clamp = (v, lo, hi, def) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def);
+
 // ---------- fuentes ----------
-/** Escenas limpias de los tráileres/PV del anime en YouTube (vídeos hasta tener ~20, máx. 4; una vez por anime y proyecto). */
+/** Escenas limpias de los tráileres/PV o escenas clave del anime en YouTube (vídeos hasta tener ~20, máx. 4; una vez por anime y proyecto). */
 async function trailer(query, dir, log, context = '', exact = false) {
   const slug = norm(query).slice(0, 40) || 'anime';
-  // Cambia el nombre cuando cambia el criterio visual: no reutilizar catálogos creados antes de filtrar retículas y texto.
-  const scenesFile = path.join(dir, `tr-${slug}-cat-v3.json`);
-  if (existsSync(scenesFile)) return { scenes: JSON.parse(await readFile(scenesFile, 'utf8')) };
+  // Cambia el nombre cuando cambia el criterio visual: v4 añade focusX/focusY y layout ('full'|'card').
+  const scenesFile = path.join(dir, `tr-${slug}-cat-v4.json`);
+  const legacyFile = path.join(dir, `tr-${slug}-cat-v3.json`);
+  const hasRealDesc = (arr) => Array.isArray(arr) && arr.some((x) => x.desc && x.desc !== 'escena del anime');
+  if (existsSync(scenesFile)) {
+    const cached = JSON.parse(await readFile(scenesFile, 'utf8'));
+    if (hasRealDesc(cached)) return { scenes: cached };
+  }
+  const scenes = [];
+  // Si ya hay vídeos descargados en la carpeta (p. ej. al re-montar un short existente), los catalogamos con v4 sin volver a descargar de YouTube
+  if (existsSync(path.join(dir, `tr-${slug}-0.mp4`))) {
+    for (let i = 0; i < 4; i++) {
+      const file = path.join(dir, `tr-${slug}-${i}.mp4`);
+      if (!existsSync(file)) break;
+      const dur = +(await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).catch(() => '0')).trim() || 90;
+      log(`🎞 Catalogando escenas (v4) de «${query}» (${path.basename(file)})…`);
+      scenes.push(...await catalogScenes(file, await scenesOf(file, dur), dir, log, `${query}. ${context}`, exact).catch((e) => { log(`⚠️ Sin revisar escenas: ${e.message.slice(0, 120)}`); return []; }));
+    }
+    if (scenes.length >= (exact ? 2 : 5) && hasRealDesc(scenes)) {
+      await writeFile(scenesFile, JSON.stringify(scenes));
+      return { scenes };
+    }
+    if (existsSync(legacyFile)) return { scenes: JSON.parse(await readFile(legacyFile, 'utf8')) };
+  }
   // primero el PV japonés (sin subtítulos); anuncios nuevos aún no tienen tráiler: opening o cada parte del nombre
   const parts = String(query).split(/\s+(?:x|×|&|y)\s+|:\s*/i).filter((x) => x.trim() && x !== query);
   const tries = exact ? [query] : [`${query} PV`, `${query} anime trailer`, `${query} anime opening`, ...parts.map((x) => `${x} anime PV`)];
-  const scenes = [], seen = new Set();
+  const minDur = exact ? 15 : 30;
+  const maxDur = exact ? 360 : 600;
+  const seen = new Set();
   let videos = 0, err = null, first = null;
   // YouTube corta a ratos (403): otro formato y, si no, el siguiente vídeo
   find: for (const q of tries) {
-    for (const cand of (await search(q, 8).catch(() => [])).filter((x) => x.duration >= 30 && x.duration <= 600 && !seen.has(x.id) && !REACTION.test(x.title)).slice(0, 2)) {
+    for (const cand of (await search(q, 8).catch(() => [])).filter((x) => x.duration >= minDur && x.duration <= maxDur && !seen.has(x.id) && !REACTION.test(x.title)).slice(0, 2)) {
       seen.add(cand.id);
       const file = path.join(dir, `tr-${slug}-${videos}.mp4`);
       for (const fmt of ['bv*[height<=1080][vcodec^=avc1]/bv*[height<=1080]', 'bv*[height<=1080]/b']) {
         try {
           await ytdlp(['-q', '-f', fmt, '--merge-output-format', 'mp4', '-o', file, `https://www.youtube.com/watch?v=${cand.id}`], 300000);
         } catch (e) { err = e; continue; }
-        log(`🎞 Tráiler de «${query}»: ${cand.title} (${cand.channel})`);
+        log(`🎞 ${exact ? 'Clip' : 'Tráiler'} de «${query}»: ${cand.title} (${cand.channel})`);
         videos++;
         first ??= { file, dur: cand.duration };
         scenes.push(...await catalogScenes(file, await scenesOf(file, cand.duration), dir, log, `${query}. ${context}`, exact).catch((e) => { log(`⚠️ Sin revisar escenas: ${e.message.slice(0, 120)}`); return []; }));
         break;
       }
-      if (scenes.length >= 20 || videos >= 4) break find;
+      if (scenes.length >= (exact ? 12 : 20) || videos >= (exact ? 2 : 4)) break find;
     }
   }
-  if (!first) throw new Error(`No encuentro tráiler de «${query}»${err ? ` (${err.message.slice(0, 80)})` : ''}`);
+  if (!first) throw new Error(`No encuentro ${exact ? 'vídeo' : 'tráiler'} de «${query}»${err ? ` (${err.message.slice(0, 80)})` : ''}`);
   // Un PV lleno de overlays, manga o planos descartados no es una fuente útil: las imágenes limpias son mejor respaldo.
-  if (scenes.length < 5) throw new Error(`El tráiler de «${query}» no tiene suficientes escenas limpias`);
+  if (scenes.length < (exact ? 2 : 5)) throw new Error(`El ${exact ? 'vídeo' : 'tráiler'} de «${query}» no tiene suficientes escenas limpias`);
   await writeFile(scenesFile, JSON.stringify(scenes));
   return { scenes };
 }
@@ -94,8 +119,8 @@ async function scenesOf(file, dur) {
 
 /**
  * Catálogo de escenas: la IA mira una rejilla con un fotograma de cada una y describe qué se ve, quién sale (si se le
- * reconoce), el plano, la acción y la emoción; quita las que no sirven (texto grande, logos, personas reales, negro) y
- * marca las mejores para miniatura.
+ * reconoce), el plano, la acción, la emoción, el punto focal (focusX, focusY) para el recorte vertical 9:16 y si
+ * necesita encuadre completo (layout: 'card'); quita las que no sirven y marca las mejores para miniatura.
  */
 async function catalogScenes(file, scenes, dir, log, context, real = false) {
   const all = scenes.slice(0, 64);
@@ -110,14 +135,34 @@ async function catalogScenes(file, scenes, dir, log, context, real = false) {
     }
     await ff(['-framerate', '1', '-i', `${tag}-%02d.jpg`, '-vf', `tile=4x${Math.ceil(pick.length / 4)}:padding=4:color=white`, '-frames:v', '1', `${tag}.jpg`]);
     const ev = await claudeStep({
-      prompt: `Lee la imagen ${path.basename(tag)}.jpg: es una rejilla numerada (1-${pick.length}) con un fotograma de cada escena de ${real ? 'un vídeo real del que habla la noticia' : 'un tráiler de anime'} (${context}).
-Para CADA una de las ${pick.length} escenas devuelve en "scenes": "n" (número), "desc" (qué se ve, ≤ 12 palabras, concreto), "who" (qué personaje sale, por su nombre si lo reconoces por el anime y la historia, o una descripción breve: «chica pelirroja con delantal»; vacío si no sale nadie), "shot" (primer plano | plano medio | plano general | detalle), "action" (0 quieto … 3 mucha acción), "emotion" (una palabra).
+      prompt: `Lee la imagen ${path.basename(tag)}.jpg: es una rejilla numerada (1-${pick.length}) con un fotograma 16:9 de cada escena de ${real ? 'un vídeo real del que habla la noticia' : 'un tráiler o escena de anime'} (${context}).
+Para CADA una de las ${pick.length} escenas devuelve en "scenes":
+- "n" (número),
+- "desc" (qué se ve exactamente, ≤ 14 palabras, concreto),
+- "who" (qué personaje o persona sale, por su nombre si lo reconoces por el anime y la historia, o una descripción breve: «chica pelirroja con delantal»; vacío si no sale nadie),
+- "shot" (primer plano | plano medio | plano general | detalle),
+- "action" (0 quieto … 3 mucha acción),
+- "emotion" (una palabra),
+- "focusX" (0.0 a 1.0: posición horizontal de la cara, personaje o acción principal en el fotograma 16:9: 0.25 izquierda, 0.5 centro, 0.75 derecha; donde debe apuntar la cámara al recortar a vertical 9:16),
+- "focusY" (0.0 a 1.0: posición vertical de la cara o sujeto principal: 0.3 arriba, 0.5 centro, 0.7 abajo),
+- "layout" ("full" | "card": usa "full" casi siempre para que la escena llene la pantalla vertical centrada en focusX; usa "card" SOLO si hay dos personajes separados en los extremos izquierdo y derecho interactuando o si es un vídeo real/comparativa donde recortar los lados rompería lo que se muestra).
 En "thumb" hasta 2 números de escenas que serían una buena miniatura (primer plano con emoción clara, nítido).
 En "bad" las que NO sirven: texto grande o en el centro (títulos, créditos, fechas, logos, carteles, portadas de manga o títulos japoneses), retículas/miras/interfaz gráfica que cubran la imagen, viñetas o páginas de manga, dibujos en blanco y negro, imágenes estáticas promocionales con texto, ${real ? '' : 'personas reales, webcams o anuncios, '}pantallas negras o casi vacías, muy borrosas. Acepta solo fotogramas ${real ? 'nítidos del vídeo (personas, lugares y objetos reales valen)' : 'de animación a color'}, sin texto dominante; los subtítulos pequeños abajo no importan (se recortan).`,
       schema: {
         type: 'object',
         properties: {
-          scenes: { type: 'array', items: { type: 'object', properties: { n: { type: 'number' }, desc: { type: 'string' }, who: { type: 'string' }, shot: { type: 'string' }, action: { type: 'number' }, emotion: { type: 'string' } }, required: ['n', 'desc', 'who', 'shot', 'action', 'emotion'] } },
+          scenes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                n: { type: 'number' }, desc: { type: 'string' }, who: { type: 'string' }, shot: { type: 'string' },
+                action: { type: 'number' }, emotion: { type: 'string' },
+                focusX: { type: 'number' }, focusY: { type: 'number' }, layout: { type: 'string', enum: ['full', 'card'] },
+              },
+              required: ['n', 'desc', 'who', 'shot', 'action', 'emotion', 'focusX', 'focusY', 'layout'],
+            },
+          },
           thumb: { type: 'array', items: { type: 'number' } }, bad: { type: 'array', items: { type: 'number' } },
         },
         required: ['scenes', 'thumb', 'bad'],
@@ -126,7 +171,21 @@ En "bad" las que NO sirven: texto grande o en el centro (títulos, créditos, fe
     }, () => {}, () => {}).catch(() => ({ data: {} }));
     for (const n of ev.data.bad ?? []) bad.add(b + Number(n) - 1);
     // «ninguno», «nadie», «-»… = no sale nadie
-    for (const d of ev.data.scenes ?? []) { const x = pick[d.n - 1]; if (x) Object.assign(x, { desc: d.desc, who: /^(ningun[oa]?|nadie|none|n\/a|-|—|sin personajes?)$/i.test(String(d.who ?? '').trim()) ? '' : d.who, shot: d.shot, action: d.action, emotion: d.emotion }); }
+    for (const d of ev.data.scenes ?? []) {
+      const x = pick[d.n - 1];
+      if (x) {
+        Object.assign(x, {
+          desc: d.desc,
+          who: /^(ningun[oa]?|nadie|none|n\/a|-|—|sin personajes?)$/i.test(String(d.who ?? '').trim()) ? '' : d.who,
+          shot: d.shot,
+          action: d.action,
+          emotion: d.emotion,
+          focusX: clamp(d.focusX, 0, 1, 0.5),
+          focusY: clamp(d.focusY, 0, 1, 0.38),
+          layout: d.layout === 'card' ? 'card' : 'full',
+        });
+      }
+    }
     (ev.data.thumb ?? []).forEach((n, r) => { if (pick[n - 1]) pick[n - 1].thumb = r + 1 + b; });
   }
   const good = all.filter((x, i) => !bad.has(i));
@@ -135,14 +194,103 @@ En "bad" las que NO sirven: texto grande o en el centro (títulos, créditos, fe
   return good;
 }
 
+/**
+ * Analiza las imágenes descargadas viendo cada foto entera sin recortar (con sus proporciones reales):
+ * obtiene dimensiones (w, h), describe qué se ve realmente, sitúa el punto focal (focusX, focusY) y decide si
+ * debe mostrarse a pantalla completa ('full', recortada en focusX/focusY) o en encuadre completo ('card', sobre
+ * fondo desenfocado para no amputar los lados cuando es una foto horizontal de una persona, entrevista, grupo o noticia).
+ */
+async function catalogImages(items, context, dir, log) {
+  if (!items.length) return [];
+  const valid = [];
+  for (const it of items) {
+    try {
+      const [w, h] = (await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', it.file])).trim().split(',').map(Number);
+      if (w >= 250 && h >= 250) valid.push({ ...it, w, h });
+    } catch {}
+  }
+  if (!valid.length) return [];
+  const out = [];
+  for (let b = 0; b < valid.length; b += 12) {
+    const batch = valid.slice(b, b + 12);
+    const tag = path.join(dir, `imgcat-v1-${b}-${path.basename(batch[0].file, path.extname(batch[0].file))}`);
+    for (const [i, x] of batch.entries()) {
+      await ff(['-i', x.file, '-frames:v', '1', '-vf', `scale=320:220:force_original_aspect_ratio=decrease,pad=320:220:(ow-iw)/2:(oh-ih)/2:color=black,drawtext=text='${i + 1}':x=6:y=4:fontsize=30:fontcolor=yellow:box=1:boxcolor=black@0.75:boxborderw=4,format=yuvj420p`, `${tag}-${String(i).padStart(2, '0')}.jpg`]);
+    }
+    await ff(['-framerate', '1', '-i', `${tag}-%02d.jpg`, '-vf', `tile=4x${Math.ceil(batch.length / 4)}:padding=4:color=white`, '-frames:v', '1', `${tag}.jpg`]);
+    const ev = await claudeStep({
+      prompt: `Lee la imagen ${path.basename(tag)}.jpg: son ${batch.length} imágenes numeradas (vistas enteras con sus bordes reales) para un short sobre: ${context}.
+Búsqueda o rol de cada una: ${batch.map((x, i) => `${i + 1}: ${x.hint || x.desc || 'imagen'}`).join(' · ')}.
+Para CADA imagen (1-${batch.length}) devuelve en "photos":
+- "n" (número),
+- "desc" (qué se ve de verdad en la imagen, ≤ 14 palabras),
+- "who" (quién o qué personaje/persona real aparece; vacío si no hay),
+- "shot" (primer plano | plano medio | plano general | detalle | foto),
+- "focusX" (0.0 a 1.0: posición horizontal de la cara o elemento principal),
+- "focusY" (0.0 a 1.0: posición vertical de la cara o elemento principal),
+- "layout" ("full" | "card": usa "card" si la imagen es horizontal/apaisada y muestra a una persona real, entrevista, varios personajes a lo ancho, un post/noticia o un objeto ancho que se cortaría mal al pasar a vertical 9:16; usa "full" si es vertical o si un recorte vertical centrado en focusX muestra al personaje principal limpio y completo),
+- "bad" (true si es solo un logo genérico de una web, imagen rota/borrosa, página de manga en blanco y negro o no tiene relación con la historia).`,
+      schema: {
+        type: 'object',
+        properties: {
+          photos: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                n: { type: 'number' }, desc: { type: 'string' }, who: { type: 'string' }, shot: { type: 'string' },
+                focusX: { type: 'number' }, focusY: { type: 'number' }, layout: { type: 'string', enum: ['full', 'card'] }, bad: { type: 'boolean' },
+              },
+              required: ['n', 'desc', 'who', 'shot', 'focusX', 'focusY', 'layout', 'bad'],
+            },
+          },
+        },
+        required: ['photos'],
+      },
+      system: 'Eres director de fotografía y editor de shorts verticales. Miras imágenes con la herramienta Read.', model: 'sonnet', effort: 'low', tools: ['Read'], cwd: dir,
+    }, () => {}, () => {}).catch(() => ({ data: {} }));
+    for (const [i, x] of batch.entries()) {
+      const d = (ev.data.photos ?? []).find((p) => Number(p.n) === i + 1);
+      if (d?.bad) continue;
+      const isWideSpecific = (x.line != null || x.news) && x.w > x.h * 1.15;
+      out.push({
+        ...x,
+        desc: d?.desc || x.desc || 'imagen de apoyo',
+        who: /^(ningun[oa]?|nadie|none|n\/a|-|—)$/i.test(String(d?.who ?? '').trim()) ? (x.who ?? '') : (d?.who || x.who || ''),
+        shot: d?.shot || x.shot || 'foto',
+        focusX: clamp(d?.focusX, 0, 1, 0.5),
+        focusY: clamp(d?.focusY, 0, 1, 0.4),
+        layout: d?.layout === 'card' || isWideSpecific ? 'card' : 'full',
+      });
+    }
+  }
+  return out;
+}
+
 // ---------- tiempos ----------
-/** Inicio y fin de cada frase del guion a partir de las palabras alineadas (por recuento de palabras). */
+/** Inicio y fin de cada frase del guion a partir de las palabras alineadas (con re-sincronización si Whisper parte o une una palabra). */
 function lineTimes(lines, words, total) {
   let k = 0;
   return lines.map((l, i) => {
-    const n = String(l.text).split(/\s+/).filter(Boolean).length;
+    const tokens = String(l.text).split(/\s+/).map(norm).filter(Boolean);
+    if (i > 0 && tokens.length && k < words.length) {
+      const first = tokens[0];
+      let best = k;
+      for (let off = 0; off <= 8; off++) {
+        for (const cand of [k + off, k - off]) {
+          if (cand <= 0 || cand >= words.length) continue;
+          const wClean = norm(words[cand].w);
+          if (wClean === first || (first.length >= 4 && (wClean.startsWith(first.slice(0, 4)) || first.startsWith(wClean.slice(0, 4))))) {
+            best = cand;
+            off = 99;
+            break;
+          }
+        }
+      }
+      k = best;
+    }
     const s = i ? (words[k]?.s ?? total) : 0;
-    k += n;
+    k += tokens.length;
     return { ...l, s };
   }).map((l, i, a) => ({ ...l, e: a[i + 1]?.s ?? total }));
 }
@@ -151,20 +299,43 @@ function lineTimes(lines, words, total) {
 const subtitles = (words, script, total) => assDoc({ events: wordEvents(words, script, total), brand: BRAND, total });
 
 // ---------- montaje ----------
-/** Clip de un corte. Vídeo: una parte de la escena (otra cada vez que se reutiliza); foto: acercamiento lento.
- *  emph: segundo del corte en que suena una palabra resaltada → acercamiento rápido («punch-in») desde ahí. */
-async function renderCut(c, item, uses, out) {
+/** Clip de un corte.
+ *  - Modo 'full': encuadre vertical 9:16 apuntando directamente al punto focal (focusX, focusY) y situando las caras en
+ *    el tercio medio-superior (42 % de la altura) para que los subtítulos (y = 1150) nunca las tapen.
+ *  - Modo 'card' (Cinema Card): para fotos horizontales, pruebas, noticias o planos donde importa todo el ancho; muestra
+ *    el 100 % de la imagen/escena enmarcada con borde y sombra en y = 600 sobre un fondo en movimiento desenfocado.
+ *  - emph: segundo del corte en que suena una palabra resaltada → acercamiento rápido («punch-in») desde ahí. */
+export async function renderCut(c, item, uses, out) {
   const dur = +(c.e - c.s).toFixed(3);
   const frames = Math.max(1, Math.round(dur * FPS));
   if (!item) throw new Error(`El editor no asignó material al corte ${c.i + 1}`);
-  // zoompan expresa `on` en fotogramas, mientras emph llega en segundos relativos al corte.
+  const fx = clamp(item.focusX, 0, 1, 0.5);
+  const fy = clamp(item.focusY, 0, 1, 0.4);
+  // En zoompan: sobre una imagen fija (`d=frames`) el contador de fotograma es `on`; sobre vídeo (`d=1`) es `in`.
   const punchAt = c.emph == null ? null : Math.max(0, Math.round(c.emph * FPS));
-  const punch = punchAt == null ? '' : `if(gte(on,${punchAt}),min(0.12,0.12*(on-${punchAt})/${Math.max(1, Math.round(FPS * 0.15))}),0)`;
+  const punchDur = Math.max(1, Math.round(FPS * 0.12));
+
   if (item.kind === 'image') {
-    const z = punch ? `min(1.12,1+0.06*on/${frames}+${punch})` : `1+0.06*on/${frames}`;
-    await ff(['-i', item.file, '-vf', `scale=${W * 2}:${H * 2}:force_original_aspect_ratio=increase,crop=${W * 2}:${H * 2},zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=${FPS},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
+    const punchImg = punchAt == null ? '' : `if(gte(on,${punchAt}),0.12*(1-pow(max(0,1-(on-${punchAt})/${punchDur}),3)),0)`;
+    if (item.layout === 'card') {
+      const ratio = item.w && item.h ? item.w / item.h : 16 / 9;
+      const cardW = ratio < 1.08 ? 840 : 996;
+      const cardH = Math.min(840, Math.max(460, Math.round(cardW / ratio / 2) * 2));
+      const zFg = punchImg ? `min(1.15,1+0.05*on/${frames}+${punchImg})` : `1+0.05*on/${frames}`;
+      const vf = [
+        `split[bg0][fg0]`,
+        `[bg0]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',zoompan=z='1+0.04*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=${FPS},boxblur=28:3,eq=brightness=-0.28:saturation=0.85[bg]`,
+        `[fg0]scale=${cardW * 2}:${cardH * 2}:force_original_aspect_ratio=increase,crop=${cardW * 2}:${cardH * 2}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',zoompan=z='${zFg}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${cardW}x${cardH}:fps=${FPS},pad=iw+8:ih+8:4:4:color=white@0.88,pad=iw+28:ih+28:14:14:color=black@0.45[fg]`,
+        `[bg][fg]overlay=(W-w)/2:600-(h/2),format=yuv420p`,
+      ].join(';');
+      await ff(['-i', item.file, '-vf', vf, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
+      return;
+    }
+    const z = punchImg ? `min(1.18,1+0.06*on/${frames}+${punchImg})` : `1+0.06*on/${frames}`;
+    await ff(['-i', item.file, '-vf', `scale=${W * 2}:${H * 2}:force_original_aspect_ratio=increase,crop=${W * 2}:${H * 2}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh*0.42))',zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=${FPS},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
     return;
   }
+
   const len = item.e - item.s;
   // la primera vez, centrado en el fotograma que la IA vio y describió; al reutilizar, otra parte (sin los bordes, que
   // suelen ser transiciones borrosas); si la escena es más corta que el corte, un poco más lenta
@@ -172,20 +343,38 @@ async function renderCut(c, item, uses, out) {
   const mid = Math.min(Math.max(lo, (item.s + item.e) / 2 - dur / 2), lo + room);
   const start = len > dur ? (uses ? lo + ((uses * 0.618) % 1) * room : mid) : item.s;
   const slow = Math.max(1, dur / Math.max(0.5, len));
-  const zoom = punch ? `,zoompan=z='min(1.12,1+${punch})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${FPS}` : '';
-  await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*PTS,scale=${Math.round(W * 1.25)}:${Math.round(H * 1.25)}:force_original_aspect_ratio=increase,crop=${W}:${H}:(iw-ow)/2:(ih-oh)*0.2,fps=${FPS}${zoom},format=yuv420p`, '-t', String(dur), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
+  const punchVid = punchAt == null ? '' : `if(gte(in,${punchAt}),0.12*(1-pow(max(0,1-(in-${punchAt})/${punchDur}),3)),0)`;
+
+  if (item.layout === 'card') {
+    const cardW = 996, cardH = 560;
+    const zoomFg = punchVid ? `,zoompan=z='min(1.12,1+${punchVid})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${cardW}x${cardH}:fps=${FPS}` : '';
+    const vf = [
+      `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),fps=${FPS},split[bg0][fg0]`,
+      `[bg0]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',boxblur=28:3,eq=brightness=-0.28:saturation=0.85[bg]`,
+      `[fg0]scale=${cardW}:${cardH}:force_original_aspect_ratio=increase,crop=${cardW}:${cardH}${zoomFg},pad=iw+8:ih+8:4:4:color=white@0.88,pad=iw+28:ih+28:14:14:color=black@0.45[fg]`,
+      `[bg][fg]overlay=(W-w)/2:600-(h/2),format=yuv420p`,
+    ].join(';');
+    await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', vf, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
+    return;
+  }
+
+  // En vídeo 9:16: si se reutiliza la misma escena más adelante, desplazamos ligeramente el encuadre horizontal para dar variedad sin perder el sujeto
+  const shiftX = uses ? clamp(fx + ((uses % 2 ? 1 : -1) * 0.08), 0.1, 0.9, fx) : fx;
+  const zoom = punchVid ? `,zoompan=z='min(1.14,1+${punchVid})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${FPS}` : '';
+  await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),scale=${Math.round(W * 1.25)}:${Math.round(H * 1.25)}:force_original_aspect_ratio=increase,crop=${W}:${H}:'max(0,min(iw-ow,iw*${shiftX.toFixed(3)}-ow/2))':'max(0,min(ih-oh,ih*${fy.toFixed(3)}-oh*0.42))',fps=${FPS}${zoom},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
 }
 
 /**
- * script: { lines: [{ text, show, query }], yellow, red }, voice: mp3, words: [{ w, s, e }] (alineadas); context: de
- * qué va (historia y personajes). Devuelve { video, thumb }.
+ * script: { lines: [{ text, show, query, visual }], scene_query, yellow, red }, voice: mp3, words: [{ w, s, e }] (alineadas);
+ * context: de qué va (historia y personajes). Devuelve { video, thumb }.
  */
 export async function montage({ script, voice, words, duration, dir, name = 'short', thumb = null, context = '', sources: news = [] }, log, signal) {
   await mkdir(dir, { recursive: true });
   const total = duration + 0.3;
   const lines = lineTimes(script.lines, words, total);
-  // catálogo: escenas de los tráileres de cada anime del guion y fotos de las frases «imagen» que encajen
+  // catálogo: escenas de los tráileres de cada anime del guion, escena clave (scene_query) y fotos verificadas con encuadre
   const catalog = [];
+  const rawImages = [];
   const animes = [...new Set(script.lines.filter((l) => l.show === 'anime').map((l) => l.query))];
   const sources = new Map();
   for (const q of animes) {
@@ -194,36 +383,46 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
     if (t) t.scenes.forEach((x) => catalog.push({ ...x, kind: 'video', anime: q, id: `V${catalog.length + 1}` }));
     else {
       const clean = `${q} anime official artwork clean no text`;
-      (await pickRelevant(await images(clean, dir), clean, context, dir)).forEach((f) => catalog.push({ kind: 'image', file: f, anime: q, id: `F${catalog.length + 1}`, desc: `imagen de ${q}`, who: 'personajes del anime', shot: 'plano medio', action: 1 }));
+      (await pickRelevant(await images(clean, dir), clean, context, dir)).forEach((f) => rawImages.push({ kind: 'image', file: f, anime: q, desc: `imagen de ${q}`, hint: `arte oficial de ${q}`, who: 'personajes del anime', shot: 'plano medio', action: 1 }));
     }
-    // Más variedad: solo arte promocional limpio. Las portadas del manga suelen meter títulos enormes y arruinan el
-    // ritmo visual, aunque la búsqueda las considere «relevantes».
+    // Más variedad: arte promocional limpio.
     for (const extra of [`${q} anime official key visual clean no text`]) {
-      for (const f of (await pickRelevant(await images(extra, dir), extra, context, dir)).slice(0, 3)) catalog.push({ kind: 'image', file: f, anime: q, id: `F${catalog.length + 1}`, desc: `arte oficial: ${extra.replace(q, '').trim()}`, who: 'personajes del anime', shot: 'plano medio', action: 1, hash: await dhash(f) });
+      for (const f of (await pickRelevant(await images(extra, dir), extra, context, dir)).slice(0, 3)) rawImages.push({ kind: 'image', file: f, anime: q, desc: `arte oficial de ${q}`, hint: `arte oficial de ${q}`, who: 'personajes del anime', shot: 'plano medio', action: 1 });
     }
+  }
+  // Si el guion gira en torno a una escena, pelea o final concreto del anime (scene_query), buscamos también ese clip exacto
+  if (script.scene_query?.trim() && !animes.some((a) => norm(a) === norm(script.scene_query))) {
+    const sq = script.scene_query.trim();
+    const st = await trailer(sq, dir, log, context, true).catch((e) => { log(`ℹ️ Escena específica «${sq}»: ${e.message.slice(0, 90)}`); return null; });
+    if (st) st.scenes.forEach((x) => catalog.push({ ...x, kind: 'video', anime: animes[0] ?? sq, id: `V${catalog.length + 1}`, desc: `escena clave (${sq}): ${x.desc ?? ''}` }));
   }
   for (const [line, l] of script.lines.entries()) if (l.show === 'imagen') {
-    // Las búsquedas «manga cover/portada» devuelven casi siempre una portada llena de texto. Para el dato usamos
-    // arte promocional limpio del anime; la frase ya aporta la cifra y no necesitamos mostrar una portada ilegible.
-    const query = /manga\s*(cover|portada)|portada\s*(del|de)?\s*manga/i.test(l.query)
+    const isMangaCover = /manga\s*(cover|portada)|portada\s*(del|de)?\s*manga/i.test(l.query);
+    const query = isMangaCover
       ? `${animes[0] ?? l.query} anime official key visual clean no text`
-      : `${l.query} official photo clean no text`;
-    (await pickRelevant(await images(query, dir), query, context, dir)).slice(0, 3).forEach((f) => catalog.push({ kind: 'image', file: f, line, id: `F${catalog.length + 1}`, desc: l.query, shot: 'foto', action: 0 }));
+      : l.query;
+    const picked = await pickRelevant(await images(query, dir), query, `${context}. Frase: ${l.text}. Visual buscado: ${l.visual || l.query}`, dir, { specific: !isMangaCover });
+    picked.slice(0, 3).forEach((f) => rawImages.push({ kind: 'image', file: f, line, desc: l.visual || l.query, hint: `${l.query} (${l.visual || l.text})`, shot: 'foto', action: 0 }));
   }
   // lo que se cuenta, tal cual: el vídeo concreto de las frases «video» y la foto de cada noticia
-  // ponytail: como mucho 2 vídeos distintos (las búsquedas parecidas devuelven el mismo clip y cada uno se revisa con IA)
   const videoLines = [...script.lines.entries()].filter(([, l]) => l.show === 'video');
   for (const [line, l] of videoLines.filter(([, l], k) => videoLines.findIndex(([, m]) => norm(m.query) === norm(l.query)) === k).slice(0, 2)) {
-    const t = await trailer(l.query, dir, log, context, true).catch((e) => { log(`⚠️ Vídeo «${l.query}»: ${e.message.slice(0, 100)}`); return null; });
-    if (t) t.scenes.forEach((x) => catalog.push({ ...x, kind: 'video', line, id: `V${catalog.length + 1}`, desc: `vídeo real «${l.query}»: ${x.desc ?? ''}` }));
-    else (await pickRelevant(await images(l.query, dir), l.query, context, dir)).slice(0, 3).forEach((f) => catalog.push({ kind: 'image', file: f, line, id: `F${catalog.length + 1}`, desc: l.query, shot: 'foto', action: 0 }));
+    const t = await trailer(l.query, dir, log, `${context}. Mostrar: ${l.visual || l.text}`, true).catch((e) => { log(`⚠️ Vídeo «${l.query}»: ${e.message.slice(0, 100)}`); return null; });
+    if (t) t.scenes.forEach((x) => catalog.push({ ...x, kind: 'video', line, id: `V${catalog.length + 1}`, desc: `vídeo «${l.query}»: ${x.desc ?? ''}` }));
+    else {
+      const picked = await pickRelevant(await images(l.query, dir), l.query, `${context}. Mostrar: ${l.visual || l.text}`, dir, { specific: true });
+      picked.slice(0, 3).forEach((f) => rawImages.push({ kind: 'image', file: f, line, desc: l.visual || l.query, hint: `${l.query} (${l.visual || l.text})`, shot: 'foto', action: 0 }));
+    }
   }
   const newsPics = await newsImages(news, dir);
   if (newsPics.length) log(`📰 ${newsPics.length} foto${newsPics.length === 1 ? '' : 's'} de las noticias: ${newsPics.map((n) => n.title.slice(0, 50)).join(' · ')}`);
-  for (const n of newsPics) catalog.push({ kind: 'image', file: n.file, id: `F${catalog.length + 1}`, desc: `foto de la noticia: ${n.title}`, who: '', shot: 'foto', action: 0 });
+  for (const n of newsPics) rawImages.push({ kind: 'image', file: n.file, news: true, desc: `foto de la noticia: ${n.title}`, hint: `noticia: ${n.title}`, who: '', shot: 'foto', action: 0 });
+
+  // Catalogar todas las imágenes viendo su proporción real para fijar focusX, focusY y layout ('full' vs 'card')
+  const checkedImages = await catalogImages(rawImages, context, dir, log);
+  for (const img of checkedImages) catalog.push({ ...img, id: `F${catalog.length + 1}`, hash: img.hash || await dhash(img.file) });
+
   if (!catalog.length) throw new Error('Sin escenas ni imágenes para montar');
-  // Las imágenes de respaldo también deben participar en la detección de tomas casi iguales.
-  for (const item of catalog) if (item.kind === 'image' && !item.hash) item.hash = await dhash(item.file);
   const takes = groupTakes(catalog);
   // El ritmo no se relaja por tener poco material: un short necesita cambios visuales frecuentes. Si faltan tomas,
   // el editor reutiliza una parte distinta de una escena antes que dejar un plano estático de 4-5 segundos.
@@ -232,11 +431,14 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
   const slots = cutSlots(lines, words, script, { min: 1.3, target, max: 2.6, hook: 2 });
   log(`🎬 Editor IA: ${slots.length} cortes de ~${target.toFixed(1)} s con ${catalog.length} planos (${takes} tomas distintas)…`);
   const { plan, climax, motion } = await planEdit({ slots, lines, catalog, context }, log);
-  // el gancho (2 primeros s) siempre con primeros planos de personajes distintos, los de más acción primero: medido,
-  // los virales abren con caras y emoción, y la IA a veces elige planos abstractos
-  const faces = catalog.filter((c) => c.kind !== 'image' && c.who && /primer/i.test(c.shot ?? '')).sort((a, b) => (b.action ?? 0) - (a.action ?? 0));
-  slots.forEach((x, i) => { if (x.s < 2 && faces[i]) plan[i] = faces[i].id; });
   const byId = new Map(catalog.map((c) => [c.id, c]));
+  // el gancho (2 primeros s): si el editor dejó algún corte del arranque sin personaje ni material específico de la frase,
+  // lo cubrimos con primeros planos potentes de personajes distintos
+  const faces = catalog.filter((c) => c.kind !== 'image' && c.who && /primer/i.test(c.shot ?? '')).sort((a, b) => (b.action ?? 0) - (a.action ?? 0));
+  slots.forEach((x, i) => {
+    const cur = byId.get(plan[i]);
+    if (x.s < 2 && faces[i] && cur?.line == null && !cur?.who) plan[i] = faces[i].id;
+  });
   const uses = new Map();
   const parts = [];
   const render = async (i) => {
@@ -251,12 +453,14 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
   // revisión final: la IA mira el montaje y rehace los cortes que fallan
   const frames = [];
   for (const [i, p] of parts.entries()) { const f = `${p}.jpg`; await ff(['-ss', String((slots[i].e - slots[i].s) / 2), '-i', p, '-frames:v', '1', f]); frames.push(f); }
-  const fixes = await reviewEdit({ frames, slots, plan, catalog, context, dir });
+  const fixes = await reviewEdit({ frames, slots, lines, plan, catalog, context, dir });
   for (const [i, f] of Object.entries(fixes)) plan[i] = f.id;
   // los reemplazos tampoco pueden repetir toma cerca: se vuelven a aplicar las reglas y se rehace lo que cambie
   const before = [...plan];
   enforce(plan, catalog, { slotLines: slots.map((x) => x.line) }).plan.forEach((id, i) => { plan[i] = id; });
   for (let i = 0; i < plan.length; i++) if (fixes[i] || plan[i] !== before[i]) await render(i);
+  const tx = planTransitions({ slots, lines, plan, byId, motion, climax });
+  await applyPairTransitions(parts, slots, tx.transitions, { fps: FPS, w: W, h: H });
   log(`✂️ ${parts.length} cortes montados${Object.keys(fixes).length ? ` · revisión: ${Object.keys(fixes).length} rehecho${Object.keys(fixes).length === 1 ? '' : 's'} (${Object.values(fixes).map((f) => f.why).join('; ').slice(0, 160)})` : ' · revisión: todo bien'}`);
   const list = path.join(dir, `cuts-${name}.txt`);
   await writeFile(list, parts.map((p) => `file '${p}'`).join('\n'));
@@ -266,10 +470,8 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
   const main = animes[0] ?? script.lines[0].query;
   const scenes = sources.get(main)?.scenes ?? [{ file: parts[0], s: 0, e: 1 }];
   thumb ??= await makeThumb({ script, anime: main, scenes, dir, context }, log, signal); // la versión TikTok reutiliza la de YouTube
-  // sonido: whoosh en los cortes con movimiento (no más de uno cada 3 s) y golpe en el clímax
-  let last = -9;
-  const whooshAt = motion.map((i) => slots[i].s).filter((t) => t > 0.5 && t - last >= 3 && (last = t));
-  const sfx = await sfxTrack({ whooshAt, impactAt: slots[climax]?.s ?? null, total, dir }).catch(() => null);
+  // sonido: ding en gancho/remate, pop en acercamientos, shutter en imágenes, whoosh en barridos/zoom y riser+golpe en el clímax
+  const sfx = await sfxTrack({ whooshAt: tx.whooshAt, flashAt: tx.flashAt, impactAt: tx.impactAt, slots, lines, total, dir }).catch(() => null);
   const final = path.join(dir, `${name}.mp4`);
   // el primer fotograma es la miniatura: solo 2 fotogramas, para poder elegirla de portada sin que se vea una tarjeta
   // fija al empezar (medido en TikTok: la gente se va en el segundo 0:01-0:02)

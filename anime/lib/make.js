@@ -14,7 +14,9 @@ Título en pantalla: «${script.title}». Guion: ${script.lines.map((l) => l.tex
 async function produce({ id, story, script, voiceId, name, thumb }, { tts, aligner, mediaDir }, log, signal) {
   const context = `${story.anime}: ${story.angle}. Datos: ${story.facts}`.slice(0, 1500);
   const text = script.lines.map((l) => l.text).join(' ');
-  const [seg] = await tts.synthesize({ provider: 'elevenlabs', projectId: name === 'short' ? id : `${id}-${name}`, voiceId, settings: {}, segments: [{ index: 0, spoken: text }] }, log, signal);
+  // Ajustes de voz para shorts virales: menor stability (0,34) y mayor style (0,45) dan entonación/melodía y energía; speed 1,08 da ritmo ágil.
+  const voiceSettings = { speed: 1.08, stability: 0.34, similarity: 0.8, style: 0.45 };
+  const [seg] = await tts.synthesize({ provider: 'elevenlabs', projectId: name === 'short' ? id : `${id}-${name}`, voiceId, settings: voiceSettings, segments: [{ index: 0, spoken: text }] }, log, signal);
   const file = path.join(tts.AUDIO_DIR, decodeURIComponent(seg.url.replace(/^\/audio\//, '')));
   log('🎧 Alineando la voz palabra a palabra…');
   const [al] = await aligner.align([{ index: 0, file, prompt: text }], log, signal);
@@ -64,4 +66,35 @@ export async function makeShort({ id, story, voiceId, learn = '' }, deps, emit, 
   try { const t = await makeTiktok({ id, story, voiceId, thumb: yt.thumb, learn }, deps, emit, track, signal); tiktok = t.tiktok; cost += t.cost; }
   catch (e) { log(`⚠️ Versión TikTok: ${e.message.slice(0, 160)}`); }
   return { id, story, script, voice: yt.voice, duration: Math.round(yt.duration), video: yt.video, tiktok, thumb: `/media/${id}/thumb-4k.jpg`, thumbSmall: `/media/${id}/thumb.jpg`, cost, created: Date.now() };
+}
+
+/**
+ * Re-monta el vídeo (short.mp4 y, si existe, tiktok.mp4) de un proyecto existente reutilizando exactamente su mismo
+ * guion, su audio ya sintetizado (ElevenLabs), su alineación (words.json) y su miniatura actual.
+ */
+export async function remountProject(pj, { tts, aligner, mediaDir }, log = () => {}, signal) {
+  const { existsSync } = await import('node:fs');
+  const dir = path.join(mediaDir, pj.id);
+  const context = `${pj.story.anime}: ${pj.story.angle}. Datos: ${pj.story.facts}`.slice(0, 1500);
+  const thumb = existsSync(path.join(dir, 'thumb.jpg'))
+    ? { full: path.join(dir, 'thumb-4k.jpg'), small: path.join(dir, 'thumb.jpg') }
+    : null;
+
+  const remountOne = async (script, voiceUrl, name) => {
+    const file = path.join(tts.AUDIO_DIR, decodeURIComponent(voiceUrl.replace(/^\/audio\//, '')));
+    const text = script.lines.map((l) => l.text).join(' ');
+    const [al] = await aligner.align([{ index: 0, file, prompt: text }], log, signal);
+    const raw = (al?.words ?? []).map((w) => ({ w: w.w.trim(), s: w.s, e: w.e })).filter((w) => w.w);
+    if (!raw.length) throw new Error(`Sin palabras alineadas para ${pj.id} (${name})`);
+    const { file: voice, words, duration } = await tightenVoice(file, raw, al.duration ?? raw.at(-1).e);
+    log(`🎬 Re-montando ${pj.id} (${name}, ${Math.round(duration)} s) con encuadre inteligente y Cinema Card…`);
+    await montage({ script, voice, words, duration, dir, name, thumb, context, sources: pj.story.sources }, log, signal);
+    return Math.round(duration);
+  };
+
+  pj.duration = await remountOne(pj.script, pj.voice.url, 'short');
+  if (pj.tiktok?.script && pj.tiktok?.voice?.url) {
+    pj.tiktok.duration = await remountOne(pj.tiktok.script, pj.tiktok.voice.url, 'tiktok');
+  }
+  return pj;
 }

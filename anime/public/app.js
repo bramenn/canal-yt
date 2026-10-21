@@ -14,6 +14,7 @@ window.fetch = async (...args) => {
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const slug = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 60) || 'short';
+const sortByCreated = (arr) => [...arr].sort((a, b) => (b.created ?? b.updated ?? 0) - (a.created ?? a.updated ?? 0));
 let list = [];
 
 // ================= avisos, preguntas y tareas =================
@@ -86,10 +87,10 @@ async function runTask(title, fn) {
   try { const msg = await fn(ui); ui.ok(msg || 'Listo'); return true; }
   catch (e) { ui.fail(ui.signal.aborted ? 'Cancelado' : `No se pudo: ${e.message}`); return null; }
 }
-// cada short que termina aparece al momento en la lista
+// cada short que termina aparece al momento en la lista manteniendo el orden por fecha de generación
 const streamTo = (ui, url, body) => stream(url, body, (e) => {
   if (e.type === 'log' || e.type === 'text') ui.add(e.text);
-  if (e.type === 'short') { list = [e.project, ...list.filter((x) => x.id !== e.project.id)]; render(); }
+  if (e.type === 'short') { list = sortByCreated([e.project, ...list.filter((x) => x.id !== e.project.id)]); render(); }
 }, ui.signal);
 
 // ================= shorts =================
@@ -168,6 +169,7 @@ function render() {
           <button data-act="copy-yt" title="Título, descripción con pregunta y hashtags para YouTube Shorts">📋 YouTube</button>
           <button data-act="copy-tt" title="Texto con palabras clave, pregunta y hashtags para TikTok">📋 TikTok</button>
           <button data-act="copy-ig" title="Texto para el reel de Instagram (sube aquí el vídeo de YouTube): tu mejor red">📋 Instagram</button>
+          <button data-act="remount" title="Re-montar solo el vídeo manteniendo el mismo guion, voz y miniatura">🎬 Re-montar</button>
           <button data-act="remake" title="Guion, voz y montaje nuevos (con la voz elegida arriba)">🔄 Rehacer</button>
           <button data-act="del" class="danger" title="Borrar">🗑</button>
         </div>
@@ -206,6 +208,7 @@ $('#shorts').onclick = async (e) => {
   }
   if (act === 'tiktok') runTask(`Versión TikTok de «${p.story.anime}»`, async (ui) => { const ev = await streamTo(ui, `/api/tiktok/${p.id}`, {}); return `Versión TikTok lista (${ev.data.duration} s)`; });
   if (act === 'thumb') runTask(`Miniatura de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/thumb/${p.id}`, {}); return 'Miniatura lista: ya es el primer fotograma del vídeo'; });
+  if (act === 'remount') runTask(`Re-montando vídeo de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remount/${p.id}`, {}); return 'Vídeo re-montado con el mismo guion y voz'; });
   if (act === 'remake') runTask(`Rehaciendo «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remake/${p.id}`, { voice: $('#voice-pick').value }); return 'Short rehecho'; });
   if (act === 'del') {
     if (!(await ask({ title: '¿Borrar este short?', text: 'Se mueve a la papelera (recuperable desde la base de datos).', ok: 'Borrar', danger: true }))) return;
@@ -226,7 +229,7 @@ $('#auto').onclick = () => {
 
 $('#stats').onclick = () => runTask('Leyendo las cifras de YouTube, TikTok y Facebook', async (ui) => {
   const ev = await streamTo(ui, '/api/stats', {});
-  list = await getJSON('/api/projects');
+  list = sortByCreated(await getJSON('/api/projects'));
   render();
   return `${ev.data.found} short${ev.data.found === 1 ? '' : 's'} con cifras`;
 });
@@ -237,7 +240,7 @@ $('#logout').onclick = async () => { await postJSON('/api/logout', {}).catch(() 
 const [me, shorts, ai] = await Promise.all([getJSON('/api/me'), getJSON('/api/projects').catch(() => []), getJSON('/api/ai-status').catch(() => null)]);
 $('#ai-engine').textContent = ai ? `IA: ${ai.engine === 'codex' ? 'Codex' : ai.engine === 'claude' ? 'Claude' : 'Automático'}` : '';
 $('#me').textContent = `👤 ${me.username}`;
-list = shorts;
+list = sortByCreated(shorts);
 render();
 // la última voz elegida se recuerda en este navegador
 try { $('#voice-pick').value = localStorage.getItem('anime.voice') || 'hombre'; } catch {}

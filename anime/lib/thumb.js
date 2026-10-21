@@ -53,9 +53,9 @@ GUION: ${script.lines?.map((l) => l.text).join(' ') || script.title}
 TEXTO QUE PONDREMOS DESPUÉS: ${script.thumb_text || script.title}
 IDEA VISUAL: ${direction}
 - Representa el dato o acción de ESTA historia con un personaje reconocible y el objeto o situación relevantes. No inventes hechos ni uses un personaje ajeno solo porque sale en el tráiler.
-- Conserva el personaje (cara, pelo, ropa, estilo de animación), pero cambia claramente pose, ángulo y composición. Expresión legible y personajes en los dos tercios inferiores.
+- Conserva el personaje (cara, pelo, ropa, estilo de animación), pero cambia claramente pose, ángulo y composición. Expresión legible y todos los personajes situados en los dos tercios inferiores (por debajo del 28 % superior).
 - Colores muy vivos y saturados (naranjas, amarillos, turquesas), contraste alto, contorno limpio y nítido, un brillo o halo que lo separe del fondo; fondo simplificado y algo desenfocado.
-- El tercio de ARRIBA, despejado y más oscuro o liso: ahí irá un texto que se pone después.
+- ZONA DE TÍTULO OBLIGATORIA: el 28 % SUPERIOR de la imagen debe quedar completamente despejado (cielo, techo o fondo oscuro/liso sin cabezas, caras, manos ni objetos protagonistas), porque ahí irá el título grande.
 - Sin NINGÚN texto, letra, número, logo ni marca de agua.
 COMPOSICIONES YA USADAS QUE DEBES EVITAR: ${history.map((h) => h.direction).filter(Boolean).slice(-30).join(' · ') || 'retratos genéricos de una cara gritando de frente; diseña una escena específica de esta historia'}.
 Cuando la imagen esté generada, responde solo: listo.`;

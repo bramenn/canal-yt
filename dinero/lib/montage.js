@@ -16,13 +16,30 @@ export const BRAND = process.env.DINERO_BRAND || '@historiasdedinero';
 const FPS = 30;
 const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], timeout);
 
-/** Frases → con su inicio y fin a partir de las palabras alineadas (por recuento de palabras). */
+/** Frases → con su inicio y fin a partir de las palabras alineadas (con re-sincronización si Whisper parte o une una palabra). */
 function lineTimes(lines, words, total) {
+  const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9ñ]/g, '');
   let k = 0;
   return lines.map((l, i) => {
-    const n = String(l.text).split(/\s+/).filter(Boolean).length;
+    const tokens = String(l.text).split(/\s+/).map(norm).filter(Boolean);
+    if (i > 0 && tokens.length && k < words.length) {
+      const first = tokens[0];
+      let best = k;
+      for (let off = 0; off <= 4; off++) {
+        for (const cand of [k + off, k - off]) {
+          if (cand <= 0 || cand >= words.length) continue;
+          const wClean = norm(words[cand].w);
+          if (wClean === first || (first.length >= 4 && (wClean.startsWith(first.slice(0, 4)) || first.startsWith(wClean.slice(0, 4))))) {
+            best = cand;
+            off = 99;
+            break;
+          }
+        }
+      }
+      k = best;
+    }
     const s = i ? (words[k]?.s ?? total) : 0;
-    k += n;
+    k += tokens.length;
     return { ...l, s };
   }).map((l, i, a) => ({ ...l, e: a[i + 1]?.s ?? total }));
 }
@@ -175,7 +192,7 @@ export async function montage({ script, about, context = about, voice, words, du
   let lastWhoosh = -9;
   const whooshAt = [...new Set(motion)].sort((a, b) => a - b).map((i) => slots[i]?.s)
     .filter((t) => t != null && t > 0.5 && t - lastWhoosh >= 3 && (lastWhoosh = t));
-  const sfx = await sfxTrack({ whooshAt, impactAt: slots[climax]?.s ?? null, total, dir })
+  const sfx = await sfxTrack({ whooshAt, impactAt: slots[climax]?.s ?? null, slots, lines, total, dir })
     .catch((e) => { log(`⚠️ Sin efectos: ${e.message.slice(0, 100)}`); return null; });
   signal?.throwIfAborted();
   const final = path.join(dir, `${name}.mp4`);

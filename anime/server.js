@@ -13,8 +13,8 @@ import { countUsers } from '../lib/auth.js';
 import { gate, serveFrom } from '../lib/web.js';
 import { findStories, thumbText } from './lib/story.js';
 import { makeThumb, firstFrame } from './lib/thumb.js';
-import { readdir, readFile } from 'node:fs/promises';
-import { makeShort, makeTiktok, copyAbout } from './lib/make.js';
+import { readdir, readFile, writeFile, appendFile, unlink } from 'node:fs/promises';
+import { makeShort, makeTiktok, copyAbout, remountProject } from './lib/make.js';
 import { writeComment } from '../lib/social.js';
 import { refreshStats } from '../lib/stats.js';
 import { virality, learnings } from '../lib/virality.js';
@@ -62,6 +62,42 @@ const updateStats = (log = () => {}) => (statsRun ??= refreshStats(listProjects(
   .finally(() => { statsRun = null; }));
 setTimeout(() => updateStats().catch((e) => console.error('cifras:', e.message)), 120000);
 setInterval(() => updateStats().catch((e) => console.error('cifras:', e.message)), 30 * 60000);
+
+// Cola en disco para re-montar proyectos en segundo plano (mismo guion, voz y miniatura)
+const REMOUNT_QUEUE = path.join(PROJECTS, 'remount-queue.json');
+const REMOUNT_LOG = path.join(PROJECTS, 'remount-status.log');
+let remountBusy = false;
+setInterval(async () => {
+  if (remountBusy || !existsSync(REMOUNT_QUEUE)) return;
+  remountBusy = true;
+  try {
+    const ids = JSON.parse(await readFile(REMOUNT_QUEUE, 'utf8'));
+    await unlink(REMOUNT_QUEUE).catch(() => {});
+    const logLine = async (msg) => {
+      console.log('[remount]', msg);
+      await appendFile(REMOUNT_LOG, `[${new Date().toISOString()}] ${msg}\n`).catch(() => {});
+    };
+    await writeFile(REMOUNT_LOG, `[${new Date().toISOString()}] Iniciando re-montaje de ${ids.length} shorts: ${ids.join(', ')}\n`).catch(() => {});
+    for (const id of ids) {
+      try {
+        const pj = await getProject(safeId(id), TABLE);
+        if (!pj) { await logLine(`⚠️ ${id}: no existe en DB`); continue; }
+        await logLine(`━━ Re-montando ${id} (${pj.story?.anime})…`);
+        await remountProject(pj, { tts, aligner, mediaDir: MEDIA }, logLine);
+        pj.thumbRevision = Date.now();
+        await saveProject(pj, null, TABLE);
+        await logLine(`✅ ${id} (${pj.story?.anime}) completado (YouTube: ${pj.duration}s${pj.tiktok ? `, TikTok: ${pj.tiktok.duration}s` : ''})`);
+      } catch (e) {
+        await logLine(`❌ Error en ${id}: ${e.message}`);
+      }
+    }
+    await logLine('🎉 Todos los shorts de la cola han sido re-montados.');
+  } catch (e) {
+    console.error('remount-queue:', e.message);
+  } finally {
+    remountBusy = false;
+  }
+}, 5000);
 
 /** Tarea larga por SSE: result / error / end, cancelable al cerrar la conexión. */
 const task = (res, run) => sse(res, (emit) => {
@@ -156,6 +192,18 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       const { voice } = await readBody(req);
       return task(res, async (emit, track, signal) => makeAndSave(old.story, voice, user, emit, track, signal, old.id, await learnFrom(), old));
     }
+    // ---- re-montar solo el vídeo (mismo guion, mismo audio y misma miniatura) ----
+    if ((m = p.match(/^\/api\/remount\/([\w-]+)$/)) && req.method === 'POST') {
+      const pj = await getProject(safeId(m[1]), TABLE);
+      if (!pj) return sendJSON(res, 404, { error: 'No existe' });
+      return task(res, async (emit, _track, signal) => {
+        await remountProject(pj, { tts, aligner, mediaDir: MEDIA }, (text) => emit({ type: 'log', text }), signal);
+        pj.thumbRevision = Date.now();
+        await saveProject(pj, user.id, TABLE);
+        emit({ type: 'short', project: pj });
+        return { ok: true };
+      });
+    }
     // ---- cifras de las publicaciones (ahora mismo) ----
     if (p === '/api/stats' && req.method === 'POST') {
       return task(res, async (emit) => ({ found: await updateStats((text) => emit({ type: 'log', text })) }));
@@ -186,7 +234,7 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
         if (!pj.script.thumb_text) Object.assign(pj.script, await thumbText(pj.script, emit, track));
         log(`🖼 Texto de la miniatura: «${pj.script.thumb_text}»`);
         const main = pj.script.lines.find((l) => l.show === 'anime')?.query ?? pj.story.anime;
-        const catalogs = (await readdir(dir)).filter((f) => /^tr-.*-cat-v3\.json$/.test(f));
+        const catalogs = (await readdir(dir)).filter((f) => /^tr-.*-cat-v[34]\.json$/.test(f));
         const scenes = catalogs.length ? (await Promise.all(catalogs.map(async (f) => JSON.parse(await readFile(path.join(dir, f), 'utf8'))))).flat()
           : [{ file: path.join(dir, 'short.mp4'), s: 1, e: 3 }];
         const context = `${pj.story.anime}: ${pj.story.angle}. ${pj.story.facts}`;

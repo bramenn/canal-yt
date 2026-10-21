@@ -60,18 +60,24 @@ const SCRIPT_SCHEMA = {
     hashtags: { type: 'array', items: { type: 'string' } },
     thumb_text: { type: 'string' },
     thumb_word: { type: 'string' },
+    scene_query: { type: 'string' },
     yellow: { type: 'array', items: { type: 'string' } },
     red: { type: 'array', items: { type: 'string' } },
     lines: {
       type: 'array',
       items: {
         type: 'object',
-        properties: { text: { type: 'string' }, show: { type: 'string', enum: ['anime', 'imagen', 'video'] }, query: { type: 'string' } },
-        required: ['text', 'show', 'query'],
+        properties: {
+          text: { type: 'string' },
+          show: { type: 'string', enum: ['anime', 'imagen', 'video'] },
+          query: { type: 'string' },
+          visual: { type: 'string' },
+        },
+        required: ['text', 'show', 'query', 'visual'],
       },
     },
   },
-  required: ['title', 'description', 'hashtags', 'thumb_text', 'thumb_word', 'yellow', 'red', 'lines'],
+  required: ['title', 'description', 'hashtags', 'thumb_text', 'thumb_word', 'scene_query', 'yellow', 'red', 'lines'],
 };
 
 // duración por plataforma: Shorts premia el % visto (corto); TikTok solo paga (Creator Rewards) vídeos de más de 1 min
@@ -99,8 +105,11 @@ Devuelve:
 - "title": título al estilo AniDosis, una AFIRMACIÓN (no una pregunta: los títulos con pregunta rinden menos), palabras clave en MAYÚSCULAS, ≤ 70 caracteres, sin el nombre del canal (p. ej. «Este ANIME Se DESPIDIÓ De La MEJOR Manera POSIBLE!»).
 - "thumb_text": el texto de la miniatura (primer fotograma): 2-4 palabras en MAYÚSCULAS que despierten curiosidad o emoción sin contarlo todo y que NO repitan el título (juegan juntos: el título da contexto, la miniatura el gancho). Ej.: «NADIE LO SOPORTA», «¿CANCELADO?», «12 MINUTOS GRITANDO». "thumb_word": la palabra de "thumb_text" que va en amarillo.
 - "description": 1-2 frases para la descripción del short. "hashtags": 5-8 sin '#'.
-- "lines": el guion frase a frase (cada "text" de 4 a 18 palabras, en orden; juntas forman el guion completo). Para cada frase, qué se ve: "show" = "anime" (escenas del tráiler del anime; "query" = nombre del anime para buscar su tráiler/PV en YouTube, normalmente "${story.anime}") , "imagen" (una foto de algo real: una persona, un post, un cartel, un producto, un récord; "query" = búsqueda de imágenes concreta) o "video" (un vídeo concreto que no es el anime: un videoclip, un anuncio, un clip viral, una recreación; "query" = búsqueda exacta en YouTube de ESE vídeo, p. ej. «Eminem EZ Mil MADARA official video», «Toyota Initial D water cup»).
-  REGLA: cada frase que habla de un contenido concreto (un vídeo, una foto, un post, una canción, un producto, una persona real) lo MUESTRA con "video" o "imagen"; el público se queja cuando se habla de algo y no se ve. El resto, "anime".
+- "scene_query": si la historia habla de una escena, pelea, técnica o momento concreto del anime (p. ej. el final de Cyberpunk Edgerunners, el ataque de fantasmas de Gotenks, el entrenamiento de clones de Naruto), pon la búsqueda en inglés para encontrar ese clip exacto en YouTube (p. ej. «Cyberpunk Edgerunners David ending scene», «Dragon Ball Z Gotenks Super Ghost Kamikaze Attack scene»); si es una noticia general donde basta el tráiler del anime, pon "".
+- "lines": el guion frase a frase (cada "text" de 4 a 18 palabras, en orden; juntas forman el guion completo). Para cada frase indica:
+  * "show": "anime" (escenas del anime; "query" = nombre del anime para buscar su tráiler/PV en YouTube, normalmente "${story.anime}"), "imagen" (una foto específica de algo que se menciona: el director/autor, actor de voz, entrevista, producto, cartel, post o escena puntual; "query" = búsqueda concreta en inglés o español para encontrar exactamente esa imagen) o "video" (un vídeo concreto que no es el tráiler general: un videoclip, anuncio, clip viral, comparativa o escena muy específica; "query" = búsqueda exacta en YouTube de ESE vídeo).
+  * "visual": descripción breve y concreta (4-12 palabras) de QUÉ debe verse exactamente en pantalla y bien encuadrado mientras suena esta frase (p. ej. «primer plano de David sonriendo antes del disparo final», «foto real del director Hiroyuki Imaishi en entrevista», «Gotenks rodeado de sus fantasmas kamikaze», «Lucy sola en la Luna recordando a David»).
+  REGLA: cada frase que habla de alguien o algo concreto (una persona real, el creador, un actor, un vídeo, una foto, un producto o una escena exacta) debe pedirlo en "show" ("imagen" o "video") y detallarlo en "visual" para que el editor lo muestre justo en ese momento y bien encuadrado.
 - "yellow": 6-12 palabras sueltas del guion que se resaltan en amarillo (nombres, cifras, lo importante). "red": 2-5 palabras que se resaltan en rojo (lo impactante o negativo). Palabras exactas tal como aparecen en el guion.`,
     schema: SCRIPT_SCHEMA, system: 'Eres guionista de shorts virales de anime en español latino.', model: 'sonnet', effort: 'medium', tools: [],
   }, emit, track);
