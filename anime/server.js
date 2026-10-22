@@ -11,7 +11,7 @@ import { sendJSON, readBody, sse, setEngine, getEngine } from '../lib/claude.js'
 import { migrate, listProjects, getProject, saveProject, deleteProject, q } from '../lib/db.js';
 import { countUsers } from '../lib/auth.js';
 import { gate, serveFrom } from '../lib/web.js';
-import { findStories, thumbText } from './lib/story.js';
+import { findStories, thumbText, franchiseOf } from './lib/story.js';
 import { makeThumb, makeThumb16x9, firstFrame } from './lib/thumb.js';
 import { readdir, readFile, writeFile, appendFile, unlink } from 'node:fs/promises';
 import { makeShort, makeTiktok, copyAbout, remountProject } from './lib/make.js';
@@ -182,12 +182,17 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       const { count = 3, voice } = await readBody(req);
       return task(res, async (emit, track, signal) => {
         const log = (text) => emit({ type: 'log', text });
-        const avoid = (await listProjects(TABLE)).map((x) => `${x.story?.anime}: ${x.story?.angle}`);
-        log('🔎 Buscando las historias de anime con más gancho…');
+        const allProjects = await listProjects(TABLE);
+        const avoid = allProjects.map((x) => `${x.story?.anime}: ${x.story?.angle}`);
+        // Franquicias tratadas en los últimos 8 vídeos para enfriamiento obligatorio
+        const recentFranchises = [...new Set(
+          allProjects.slice(0, 8).map((x) => franchiseOf(x.story?.anime)).filter(Boolean)
+        )];
+        log('🔎 Buscando historias de anime con gancho y variedad de franquicias…');
         const learn = await learnFrom();
         if (learn.includes('APRENDIZAJE DE YOUTUBE ANALYTICS') || learn.includes('CONTEXTO PÚBLICO RECIENTE')) log('🧠 Usando Analytics y las señales públicas disponibles de tus Shorts…');
         else if (learn.includes('LO QUE NOS HA FUNCIONADO')) log('🧠 Aprendiendo de tus shorts que mejor funcionaron…');
-        const { stories, cost: c0 } = await findStories({ count: Math.min(5, Math.max(1, Number(count) || 3)), avoid, learn }, emit, track);
+        const { stories, cost: c0 } = await findStories({ count: Math.min(5, Math.max(1, Number(count) || 3)), avoid, recentFranchises, learn }, emit, track);
         log(`📰 ${stories.length} historias: ${stories.map((s) => s.anime).join(' · ')}`);
         let cost = c0, ok = 0;
         for (const [i, story] of stories.entries()) {
@@ -205,9 +210,13 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       return task(res, async (emit, track, signal) => {
         const v = voiceOf(voice);
         emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
-        const avoid = (await listProjects(TABLE)).map((x) => `${x.story?.anime}: ${x.story?.angle}`);
+        const allProjects = await listProjects(TABLE);
+        const avoid = allProjects.map((x) => `${x.story?.anime}: ${x.story?.angle}`);
+        const recentFranchises = [...new Set(
+          allProjects.slice(0, 8).map((x) => franchiseOf(x.story?.anime)).filter(Boolean)
+        )];
         const learn = await learnFrom();
-        const pj = await makeLong({ id: `${Date.now().toString(36)}L`, topic, voiceId: v.id, learn, avoid }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
+        const pj = await makeLong({ id: `${Date.now().toString(36)}L`, topic, voiceId: v.id, learn, avoid, recentFranchises }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
         pj.voice.title = v.title;
         await saveProject(pj, user.id, TABLE);
         emit({ type: 'short', project: pj });

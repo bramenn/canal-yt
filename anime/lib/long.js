@@ -58,11 +58,12 @@ const PLAN_SCHEMA = {
   required: ['title', 'thumb_text', 'thumb_word', 'main_anime', 'angle', 'intro_hook', 'chapters'],
 };
 
-export async function findLongPlan({ topic = '', avoid = [], learn = '' } = {}, emit, track) {
+export async function findLongPlan({ topic = '', avoid = [], recentFranchises = [], learn = '' } = {}, emit, track) {
   const today = new Date().toISOString().slice(0, 10);
   const prompt = `Hoy es ${today}. Eres el director de contenidos de un canal de YouTube de anime en español (${BRAND}) y vas a planificar un VÍDEO LARGO HORIZONTAL (16:9) de 8 a 10 minutos, estructurado en una introducción potente y 6 CAPÍTULOS llenos de datos reales y verificados.
 
-${topic.trim() ? `TEMA PEDIDO POR EL USUARIO: «${topic.trim()}»\nDesarrolla exactamente este tema o franquicia con los 6 mejores casos/capítulos documentados.` : `Elige el tema con MAYOR potencial de búsqueda y retención en YouTube (puede ser un análisis/recopilación de 6 momentos, secretos, técnicas o decisiones de una gran franquicia como Dragon Ball, Naruto, One Piece, Jujutsu Kaisen, Demon Slayer, Attack on Titan, Bleach, Hunter x Hunter, Death Note; o una recopilación multi-anime de 6 casos unidos por un hilo fascinante).`}
+${topic.trim() ? `TEMA PEDIDO POR EL USUARIO: «${topic.trim()}»\nDesarrolla exactamente este tema o franquicia con los 6 mejores casos/capítulos documentados.` : `Elige el tema con MAYOR potencial de búsqueda y retención en YouTube (puede ser un análisis/recopilación de 6 momentos, secretos, técnicas o decisiones de una gran franquicia como One Piece, Jujutsu Kaisen, Demon Slayer, Hunter x Hunter, Bleach, Attack on Titan, Chainsaw Man, Death Note, Solo Leveling; o una recopilación multi-anime de 6 casos unidos por un hilo fascinante).
+${recentFranchises.length ? `\nFRANQUICIAS EN ENFRIAMIENTO (NO las elijas como anime principal para asegurar variedad en el canal): ${recentFranchises.join(', ')}.\n` : ''}`}
 
 Investiga en la web (WebSearch y WebFetch) para que cada uno de los 6 capítulos tenga hechos 100 % reales y comprobados: números de episodio o capítulo de manga, nombres exactos de personajes, técnicas, directores, estudios, fechas o declaraciones oficiales. No inventes nada.
 ${avoid.length ? `\nNO repitas estos temas ya tratados:\n${avoid.slice(0, 30).map((x) => `- ${x}`).join('\n')}\n` : ''}${learn}
@@ -528,11 +529,11 @@ export function formatChaptersCopy(chaptersTimeline = []) {
   return chaptersTimeline.map((c) => `${fmtChapterTime(c.start)} ${c.number > 0 ? `${c.number}. ${c.heading} (${c.anime})` : c.heading}`).join('\n');
 }
 
-export async function makeLong({ id, topic = '', voiceId, learn = '', avoid = [] }, deps, emit, track, signal) {
+export async function makeLong({ id, topic = '', voiceId, learn = '', avoid = [], recentFranchises = [] }, deps, emit, track, signal) {
   const log = (text) => emit({ type: 'log', text });
   let cost = 0;
   log(`🔎 Investigando tema y estructurando 6 capítulos para vídeo largo (8-10 min)…`);
-  const { plan, cost: c0 } = await findLongPlan({ topic, avoid, learn }, emit, track);
+  const { plan, cost: c0 } = await findLongPlan({ topic, avoid, recentFranchises, learn }, emit, track);
   cost += c0;
   log(`📋 «${plan.title}» · 6 capítulos: ${plan.chapters.map((c) => `${c.number}. ${c.anime}`).join(' · ')}`);
 

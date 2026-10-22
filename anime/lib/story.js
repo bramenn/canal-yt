@@ -4,6 +4,30 @@
 //    y qué se ve en cada frase (escenas del anime o una imagen).
 import { claudeStep } from '../../lib/claude.js';
 
+/** Normaliza el nombre del anime a su franquicia principal para controlar la rotación y variedad. */
+export function franchiseOf(name = '') {
+  const n = String(name).toLowerCase().trim();
+  if (n.includes('dragon ball') || n.includes('goku') || n.includes('vegeta') || n.includes('beerus')) return 'Dragon Ball';
+  if (n.includes('naruto') || n.includes('boruto') || n.includes('shippuden')) return 'Naruto';
+  if (n.includes('one piece') || n.includes('luffy') || n.includes('zoro')) return 'One Piece';
+  if (n.includes('jujutsu') || n.includes('gojo') || n.includes('sukuna')) return 'Jujutsu Kaisen';
+  if (n.includes('demon slayer') || n.includes('kimetsu') || n.includes('tanjiro')) return 'Demon Slayer';
+  if (n.includes('bleach') || n.includes('ichigo')) return 'Bleach';
+  if (n.includes('chainsaw') || n.includes('denji') || n.includes('makima')) return 'Chainsaw Man';
+  if (n.includes('one punch') || n.includes('saitama')) return 'One Punch Man';
+  if (n.includes('attack on titan') || n.includes('shingeki') || n.includes('eren') || n.includes('levi')) return 'Attack on Titan';
+  if (n.includes('hunter x hunter') || n.includes('hxh') || n.includes('gon') || n.includes('killua')) return 'Hunter x Hunter';
+  if (n.includes('my hero academia') || n.includes('boku no hero') || n.includes('deku')) return 'My Hero Academia';
+  if (n.includes('death note') || n.includes('light yagami')) return 'Death Note';
+  if (n.includes('solo leveling') || n.includes('jinwoo')) return 'Solo Leveling';
+  if (n.includes('dan da dan') || n.includes('dandadan')) return 'Dan Da Dan';
+  if (n.includes('frieren')) return 'Frieren';
+  if (n.includes('spy x family') || n.includes('anya')) return 'Spy x Family';
+  if (n.includes('blue lock')) return 'Blue Lock';
+  if (n.includes('kaiju no. 8') || n.includes('kaiju 8')) return 'Kaiju No. 8';
+  return name.trim();
+}
+
 const STORIES_SCHEMA = {
   type: 'object',
   properties: {
@@ -22,7 +46,7 @@ const STORIES_SCHEMA = {
   required: ['stories'],
 };
 
-export async function findStories({ count = 3, avoid = [], learn = '' }, emit, track) {
+export async function findStories({ count = 3, avoid = [], recentFranchises = [], learn = '' }, emit, track) {
   const today = new Date().toISOString().slice(0, 10);
   // medido en YouTube: la noticia del día da un pico de un mes (MAPPA/JJK: 16.656 vistas, todas en mayo); un tema atemporal
   // con título buscable gotea ~1.000 vistas al mes durante un año (Gachiakuta: solo el 11 % el primer mes)
@@ -34,22 +58,57 @@ Lo que funciona en ese estilo (de sus shorts con más de 500.000 vistas): una cu
 - «Este anime inventó un ataque tan largo que ningún villano lo soporta»
 - «Este nuevo anime te advierte de algo antes de empezar»
 - «Esta actriz de voz recibió un personaje MUY extraño»
-- «Los fans de Dragon Ball están demasiado rotos»
+- «One Piece ocultó una pista clave durante 20 años en un cartel de fondo»
+- «Los animadores de MAPPA tuvieron que rehacer este episodio en 48 horas»
+
+REGLAS DE VARIEDAD Y ROTACIÓN ESTRICTAS (OBLIGATORIAS):
+1. CERO REPETICIÓN EN LA TANDA: Cada una de las ${count} historias DEBE pertenecer a una franquicia o serie COMPLETAMENTE DIFERENTE. Prohibido incluir dos historias de la misma saga en esta selección.
+2. ROTACIÓN Y ENFRIAMIENTO TEMPORAL: Para mantener la frescura del canal y evitar cansar a la audiencia, NO elijas historias de estas franquicias recientemente tratadas: ${recentFranchises.length ? recentFranchises.join(', ') : 'ninguna'}. Explora y rota hacia OTRAS franquicias gigantes (One Piece, Hunter x Hunter, Bleach, Attack on Titan, Solo Leveling, Chainsaw Man, Dan Da Dan, Spy x Family, Frieren, Demon Slayer, Jujutsu Kaisen, Death Note, Vinland Saga, Blue Lock, Kaiju No. 8, etc.) o sorpresas del anime de esta temporada.
+3. EQUILIBRIO DE ANALYTICS: Si una franquicia tuvo buen rendimiento en el pasado, tómalo como lección sobre el gancho y el tono narrativo, NUNCA como excusa para saturar el canal con el mismo anime una y otra vez.
+
 Lo que más vistas da (medido en 2026-10 en este canal y en Kudasai, Animelos, Rincón Otaku y Doctor Random), por orden:
-1. Franquicias gigantes con noticia oficial (Jujutsu Kaisen, One Piece, Naruto, Demon Slayer, Chainsaw Man, One Punch Man…): nuestros únicos shorts de 7.000-16.000 vistas.
+1. Franquicias gigantes con noticia oficial (Jujutsu Kaisen, One Piece, Naruto, Demon Slayer, Chainsaw Man, One Punch Man, Bleach…): nuestros únicos shorts de 7.000-16.000 vistas.
 2. Regresos y despedidas con nostalgia o polémica: «rompe su silencio tras 9 años», «regresa», «ADIÓS a…», «los animes que NO volverán» (nuestro récord: 31.000 en TikTok).
 3. Escándalos y curiosidades con gente real: censura, prohibiciones, fans que colapsan una web, una VTuber de 42 años, un cosplayer, un músico o una marca famosa que se cruza con un anime.
 Valen también: récords raros, polémicas de fans, decisiones absurdas de estudios.
 Evita: anuncios secos (tráiler, fecha o reparto) de animes poco conocidos (los que menos rinden y los que más se quedan en 0), rumores sin fuente, spoilers enormes sin aviso${avoid.length ? `, y estas historias ya hechas: ${avoid.slice(0, 40).join(' · ')}` : ''}.
 
-${timeless ? `ATEMPORALES (${timeless}, "type": "atemporal"; las demás "noticia"): sobre un anime que se esté emitiendo esta temporada o una franquicia gigante (Naruto, Dragon Ball, Demon Slayer, One Piece, Jujutsu Kaisen, Bleach, Chainsaw Man…), un tema que siga interesando dentro de un año a quien lo vea por primera vez: cómo funciona un poder o técnica icónica, el secreto de una pelea memorable, qué revela un episodio clave o un detalle oculto del autor. REGLA: el gancho y el ángulo deben girar en torno a un personaje, técnica o pelea MUY conocidos (Naruto, Shino, Gotenks, Goku, Tanjiro, Gojo, Luffy…), NUNCA centrados en el nombre propio de un personaje secundario oscuro que nadie busca (si interviene un secundario poco conocido, enfócalo desde lo que hizo el protagonista famoso, p. ej. «Goku mandó a un villano a fabricar dulces en la Luna» en vez de centrarlo en «Toninjinka»). Datos de fuentes fiables (wiki oficial, el propio anime o manga, entrevistas), sin spoilers del final. Ej. reales que funcionaron: «Naruto Shippuden: cómo los clones aceleraban el entrenamiento de Naruto» (9.200+ vistas en 24 h), «Demon Slayer: por qué Tanjiro no produce agua real con su espada» (6.800+ vistas), «Gachiakuta: el episodio que revela el oscuro pasado de Amo».\n` : ''}
+${timeless ? `ATEMPORALES (${timeless}, "type": "atemporal"; las demás "noticia"): sobre un anime que se esté emitiendo esta temporada o una franquicia gigante (One Piece, Naruto, Demon Slayer, Hunter x Hunter, Jujutsu Kaisen, Bleach, Chainsaw Man, Attack on Titan…), un tema que siga interesando dentro de un año a quien lo vea por primera vez: cómo funciona un poder o técnica icónica, el secreto de una pelea memorable, qué revela un episodio clave o un detalle oculto del autor. REGLA: el gancho y el ángulo deben girar en torno a un personaje, técnica o pelea MUY conocidos (Luffy, Naruto, Tanjiro, Gojo, Killua, Levi, Ichigo, Denji…), NUNCA centrados en el nombre propio de un personaje secundario oscuro que nadie busca (si interviene un secundario poco conocido, enfócalo desde lo que hizo el protagonista famoso, p. ej. «Luffy reveló una debilidad que nadie notó en Marineford» en vez de centrarlo en un secundario menor). Datos de fuentes fiables (wiki oficial, el propio anime o manga, entrevistas), sin spoilers del final. Ej. reales que funcionaron: «Naruto Shippuden: cómo los clones aceleraban el entrenamiento de Naruto» (9.200+ vistas en 24 h), «Demon Slayer: por qué Tanjiro no produce agua real con su espada» (6.800+ vistas), «Gachiakuta: el episodio que revela el oscuro pasado de Amo».\n` : ''}
 ${learn}
 
 Para cada una: "anime" (nombre del anime tal como se busca su tráiler en YouTube, en romaji o inglés), "angle" (el giro gracioso o sorprendente en una frase), "facts" (los datos concretos y verificados: nombres, cifras, fechas, qué pasó exactamente), "sources" (URLs) y "type" ("noticia" | "atemporal").`,
     schema: STORIES_SCHEMA, system: 'Eres guionista de un canal de shorts de anime en español. Verificas los datos antes de contarlos.',
     model: 'sonnet', effort: 'medium', tools: ['WebSearch', 'WebFetch'],
   }, emit, track);
-  return { stories: (ev.data.stories ?? []).slice(0, count), cost: ev.cost ?? 0 };
+
+  // Filtro de seguridad programático: garantiza que no se repita franquicia en el lote y respeta el enfriamiento
+  const rawList = ev.data.stories ?? [];
+  const selected = [];
+  const blocked = new Set(recentFranchises.map((f) => f.toLowerCase()));
+  const batchFranchises = new Set();
+
+  for (const s of rawList) {
+    const f = franchiseOf(s.anime).toLowerCase();
+    if (!blocked.has(f) && !batchFranchises.has(f)) {
+      batchFranchises.add(f);
+      selected.push(s);
+      if (selected.length === count) break;
+    }
+  }
+
+  // Si tras excluir las franquicias en enfriamiento no alcanzamos el conteo solicitado, permitimos historias siempre que sean únicas entre sí
+  if (selected.length < count) {
+    for (const s of rawList) {
+      const f = franchiseOf(s.anime).toLowerCase();
+      if (!batchFranchises.has(f)) {
+        batchFranchises.add(f);
+        selected.push(s);
+        if (selected.length === count) break;
+      }
+    }
+  }
+
+  return { stories: selected.slice(0, count), cost: ev.cost ?? 0 };
 }
 
 const SCRIPT_SCHEMA = {
