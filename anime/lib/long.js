@@ -14,6 +14,7 @@ import { cutSlots, planEdit, planTransitions, applyPairTransitions, sfxTrack, dh
 import { FONTS } from '../../lib/thumbnail.js';
 import { assTime, assEsc, YELLOW, RED, WHITE } from '../../lib/subs.js';
 import { writeCopy } from '../../lib/social.js';
+import { upscaleImage } from '../../lib/upscale.js';
 import { trailer, newsImages, catalogImages, lineTimes, BRAND } from './montage.js';
 import { makeThumb16x9 } from './thumb.js';
 
@@ -234,6 +235,7 @@ async function renderCut16x9(slot, item, uses, out) {
   const fy = clamp(item.focusY, 0.08, 0.92, 0.45);
 
   if (item.kind === 'image') {
+    const sharpFile = await upscaleImage(item.file, path.dirname(out), 2);
     const ratio = item.w && item.h ? item.w / item.h : 16 / 9;
     const useCard = item.layout === 'card' || ratio < 1.22;
     const punchImg = punchAt == null ? '' : `if(gte(on,${punchAt}),0.09*(1-pow(max(0,1-(on-${punchAt})/${punchDur}),3)),0)`;
@@ -243,15 +245,15 @@ async function renderCut16x9(slot, item, uses, out) {
       const zFg = punchImg ? `min(1.14,1+0.045*on/${frames}+${punchImg})` : `1+0.045*on/${frames}`;
       const vf = [
         `split[bg0][fg0]`,
-        `[bg0]scale=${LW}:${LH}:force_original_aspect_ratio=increase,crop=${LW}:${LH},zoompan=z='1+0.04*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${LW}x${LH}:fps=${FPS},boxblur=30:3,eq=brightness=-0.30:saturation=0.85[bg]`,
-        `[fg0]scale=${cardW * 2}:${cardH * 2}:force_original_aspect_ratio=increase,crop=${cardW * 2}:${cardH * 2}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',zoompan=z='${zFg}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${cardW}x${cardH}:fps=${FPS},pad=iw+8:ih+8:4:4:color=white@0.88,pad=iw+28:ih+28:14:14:color=black@0.45[fg]`,
+        `[bg0]scale=${LW}:${LH}:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${LW}:${LH},zoompan=z='1+0.04*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${LW}x${LH}:fps=${FPS},boxblur=30:3,eq=brightness=-0.30:saturation=0.85[bg]`,
+        `[fg0]scale=${cardW * 2}:${cardH * 2}:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${cardW * 2}:${cardH * 2}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',cas=0.40,zoompan=z='${zFg}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${cardW}x${cardH}:fps=${FPS},pad=iw+8:ih+8:4:4:color=white@0.88,pad=iw+28:ih+28:14:14:color=black@0.45[fg]`,
         `[bg][fg]overlay=(W-w)/2:(H-h)/2-25,format=yuv420p`,
       ].join(';');
-      await ff(['-i', item.file, '-vf', vf, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
+      await ff(['-i', sharpFile, '-vf', vf, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
       return;
     }
     const z = punchImg ? `min(1.16,1+0.05*on/${frames}+${punchImg})` : `1+0.05*on/${frames}`;
-    await ff(['-i', item.file, '-vf', `scale=${LW * 2}:${LH * 2}:force_original_aspect_ratio=increase,crop=${LW * 2}:${LH * 2}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${LW}x${LH}:fps=${FPS},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
+    await ff(['-i', sharpFile, '-vf', `scale=${LW * 2}:${LH * 2}:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${LW * 2}:${LH * 2}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',cas=0.40,zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${LW}x${LH}:fps=${FPS},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
     return;
   }
 
@@ -262,8 +264,8 @@ async function renderCut16x9(slot, item, uses, out) {
   const slow = Math.max(1, dur / Math.max(0.5, len));
   const punchVid = punchAt == null ? '' : `if(gte(in,${punchAt}),0.10*(1-pow(max(0,1-(in-${punchAt})/${punchDur}),3)),0)`;
   const zoom = punchVid ? `,zoompan=z='min(1.12,1+${punchVid})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${LW}x${LH}:fps=${FPS}` : '';
-  // Escala ligeramente mayor (2080×1170) y recorta la franja inferior por si el PV traía subtítulos quemados abajo
-  await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),scale=2080:1170:force_original_aspect_ratio=increase,crop=${LW}:${LH}:(iw-ow)/2:0,fps=${FPS}${zoom},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
+  // Escala ligeramente mayor (2080×1170) y recorta la franja inferior por si el PV traía subtítulos quemados abajo + CAS nitidez
+  await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),scale=2080:1170:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${LW}:${LH}:(iw-ow)/2:0,cas=0.40,fps=${FPS}${zoom},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
 }
 
 /** Subtítulos 16:9 (grupos de 3-5 palabras en la parte inferior) + insignia superior del capítulo/anime + marca @notianimes. */

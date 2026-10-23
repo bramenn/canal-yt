@@ -15,11 +15,15 @@ import { cutSlots, planEdit, reviewEdit, planTransitions, applyPairTransitions, 
 import { FONTS } from '../../lib/thumbnail.js';
 import { W, H, wordEvents, assDoc } from '../../lib/subs.js';
 import { makeThumb } from './thumb.js';
+import { computeSmartFraming } from '../../lib/animeface.js';
+import { upscaleImage } from '../../lib/upscale.js';
 
 export const BRAND = '@notianimes';
 const FPS = 30;
-// vídeos de reacción/análisis: salen personas, webcams y anuncios encima del anime
-const REACTION = /react|reacci|reaccion|analysis|análisis|analisis|explained|review|resumen|theory|teoría/i;
+// vídeos de reacción/análisis, fan-edits y AMVs: evitar para tener animación oficial limpia
+const REACTION = /react|reacci|reaccion|analysis|análisis|analisis|explained|review|resumen|theory|teoría|tier\s*list|parodia|roast|amv|fancam|meme|tiktok|cover/i;
+// Canales oficiales con metraje en máxima resolución y sin marcas de agua de terceros
+const OFFICIAL_CHANNELS = /crunchyroll|viz|toho\s*animation|tms|aniplex|muse\s*asia|ani-one|bandai\s*namco|tv\s*tokyo|netflix|warner\s*bros|kadokawa|shueisha|toei/i;
 const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], timeout);
 const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ]/g, '');
 
@@ -53,16 +57,23 @@ export async function trailer(query, dir, log, context = '', exact = false) {
     }
     if (existsSync(legacyFile)) return { scenes: JSON.parse(await readFile(legacyFile, 'utf8')) };
   }
-  // primero el PV japonés (sin subtítulos); anuncios nuevos aún no tienen tráiler: opening o cada parte del nombre
+  // primero el PV japonés o clip oficial de Crunchyroll/Viz; anuncios nuevos aún no tienen tráiler: opening o cada parte del nombre
   const parts = String(query).split(/\s+(?:x|×|&|y)\s+|:\s*/i).filter((x) => x.trim() && x !== query);
-  const tries = exact ? [query] : [`${query} PV`, `${query} anime trailer`, `${query} anime opening`, ...parts.map((x) => `${x} anime PV`)];
+  const tries = exact
+    ? [query, `${query} official clip`, `${query} Crunchyroll`, `${query} scene HD`]
+    : [`${query} official anime trailer`, `${query} PV`, `${query} anime opening`, ...parts.map((x) => `${x} anime PV`)];
   const minDur = exact ? 15 : 30;
   const maxDur = exact ? 360 : 600;
   const seen = new Set();
   let videos = 0, err = null, first = null;
   // YouTube corta a ratos (403): otro formato y, si no, el siguiente vídeo
   find: for (const q of tries) {
-    for (const cand of (await search(q, 8).catch(() => [])).filter((x) => x.duration >= minDur && x.duration <= maxDur && !seen.has(x.id) && !REACTION.test(x.title)).slice(0, 2)) {
+    const rawCands = await search(q, 10).catch(() => []);
+    // Priorizar canales oficiales (Crunchyroll, Viz, Toho, etc.) y filtrar AMVs/reacciones
+    const cands = rawCands
+      .filter((x) => x.duration >= minDur && x.duration <= maxDur && !seen.has(x.id) && !REACTION.test(x.title))
+      .sort((a, b) => (OFFICIAL_CHANNELS.test(b.channel) ? 1 : 0) - (OFFICIAL_CHANNELS.test(a.channel) ? 1 : 0));
+    for (const cand of cands.slice(0, 2)) {
       seen.add(cand.id);
       const file = path.join(dir, `tr-${slug}-${videos}.mp4`);
       for (const fmt of ['bv*[height<=1080][vcodec^=avc1]/bv*[height<=1080]', 'bv*[height<=1080]/b']) {
@@ -309,59 +320,74 @@ export async function renderCut(c, item, uses, out) {
   const dur = +(c.e - c.s).toFixed(3);
   const frames = Math.max(1, Math.round(dur * FPS));
   if (!item) throw new Error(`El editor no asignó material al corte ${c.i + 1}`);
-  const fx = clamp(item.focusX, 0, 1, 0.5);
-  const fy = clamp(item.focusY, 0, 1, 0.4);
+
+  const len = item.kind === 'video' ? item.e - item.s : 0;
+  const lo = item.kind === 'video' ? item.s + Math.min(0.2, len / 6) : 0;
+  const room = item.kind === 'video' ? Math.max(0, item.e - Math.min(0.2, len / 6) - lo - dur) : 0;
+  const mid = item.kind === 'video' ? Math.min(Math.max(lo, (item.s + item.e) / 2 - dur / 2), lo + room) : 0;
+  const start = len > dur ? (uses ? lo + ((uses * 0.618) % 1) * room : mid) : (item.s || 0);
+
+  // 1) Encuadre inteligente automático con detección de caras de anime
+  const framing = await computeSmartFraming(item, start, dur);
+  const fx = framing.focusX;
+  const fy = framing.focusY;
+  const layout = framing.layout;
+
   // En zoompan: sobre una imagen fija (`d=frames`) el contador de fotograma es `on`; sobre vídeo (`d=1`) es `in`.
   const punchAt = c.emph == null ? null : Math.max(0, Math.round(c.emph * FPS));
   const punchDur = Math.max(1, Math.round(FPS * 0.12));
 
   if (item.kind === 'image') {
-    const punchImg = punchAt == null ? '' : `if(gte(on,${punchAt}),0.12*(1-pow(max(0,1-(on-${punchAt})/${punchDur}),3)),0)`;
-    if (item.layout === 'card') {
+    // 2) Escalado neuronal Real-ESRGAN para imágenes (manga, arte, noticias)
+    const sharpFile = await upscaleImage(item.file, path.dirname(out), 2);
+    const punchImg = punchAt == null ? '' : `if(gte(on,${punchAt}),0.10*(1-pow(max(0,1-(on-${punchAt})/${punchDur}),3)),0)`;
+
+    if (layout === 'card') {
       const ratio = item.w && item.h ? item.w / item.h : 16 / 9;
       const cardW = ratio < 1.08 ? 840 : 996;
       const cardH = Math.min(840, Math.max(460, Math.round(cardW / ratio / 2) * 2));
       const zFg = punchImg ? `min(1.15,1+0.05*on/${frames}+${punchImg})` : `1+0.05*on/${frames}`;
       const vf = [
         `split[bg0][fg0]`,
-        `[bg0]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',zoompan=z='1+0.04*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=${FPS},boxblur=28:3,eq=brightness=-0.28:saturation=0.85[bg]`,
-        `[fg0]scale=${cardW * 2}:${cardH * 2}:force_original_aspect_ratio=increase,crop=${cardW * 2}:${cardH * 2}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',zoompan=z='${zFg}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${cardW}x${cardH}:fps=${FPS},pad=iw+8:ih+8:4:4:color=white@0.88,pad=iw+28:ih+28:14:14:color=black@0.45[fg]`,
+        `[bg0]scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${W}:${H}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',zoompan=z='1+0.04*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=${FPS},boxblur=28:3,eq=brightness=-0.28:saturation=0.85[bg]`,
+        `[fg0]scale=${cardW * 2}:${cardH * 2}:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${cardW * 2}:${cardH * 2}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',cas=0.42,zoompan=z='${zFg}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${cardW}x${cardH}:fps=${FPS},pad=iw+8:ih+8:4:4:color=white@0.88,pad=iw+28:ih+28:14:14:color=black@0.45[fg]`,
         `[bg][fg]overlay=(W-w)/2:600-(h/2),format=yuv420p`,
       ].join(';');
-      await ff(['-i', item.file, '-vf', vf, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
+      await ff(['-i', sharpFile, '-vf', vf, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
       return;
     }
-    const z = punchImg ? `min(1.18,1+0.06*on/${frames}+${punchImg})` : `1+0.06*on/${frames}`;
-    await ff(['-i', item.file, '-vf', `scale=${W * 2}:${H * 2}:force_original_aspect_ratio=increase,crop=${W * 2}:${H * 2}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh*0.42))',zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=${FPS},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
+    const z = punchImg ? `min(1.16,1+0.05*on/${frames}+${punchImg})` : `1+0.05*on/${frames}`;
+    await ff(['-i', sharpFile, '-vf', `scale=${W * 2}:${H * 2}:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${W * 2}:${H * 2}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh*0.38))',cas=0.42,zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=${FPS},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', out]);
     return;
   }
 
-  const len = item.e - item.s;
-  // la primera vez, centrado en el fotograma que la IA vio y describió; al reutilizar, otra parte (sin los bordes, que
-  // suelen ser transiciones borrosas); si la escena es más corta que el corte, un poco más lenta
-  const lo = item.s + Math.min(0.2, len / 6), room = Math.max(0, item.e - Math.min(0.2, len / 6) - lo - dur);
-  const mid = Math.min(Math.max(lo, (item.s + item.e) / 2 - dur / 2), lo + room);
-  const start = len > dur ? (uses ? lo + ((uses * 0.618) % 1) * room : mid) : item.s;
   const slow = Math.max(1, dur / Math.max(0.5, len));
-  const punchVid = punchAt == null ? '' : `if(gte(in,${punchAt}),0.12*(1-pow(max(0,1-(in-${punchAt})/${punchDur}),3)),0)`;
+  const punchVid = punchAt == null ? '' : `if(gte(in,${punchAt}),0.10*(1-pow(max(0,1-(in-${punchAt})/${punchDur}),3)),0)`;
 
-  if (item.layout === 'card') {
+  if (layout === 'card') {
     const cardW = 996, cardH = 560;
-    const zoomFg = punchVid ? `,zoompan=z='min(1.12,1+${punchVid})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${cardW}x${cardH}:fps=${FPS}` : '';
+    const zoomFg = punchVid ? `,zoompan=z='min(1.10,1+${punchVid})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${cardW}x${cardH}:fps=${FPS}` : '';
     const vf = [
       `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),fps=${FPS},split[bg0][fg0]`,
-      `[bg0]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',boxblur=28:3,eq=brightness=-0.28:saturation=0.85[bg]`,
-      `[fg0]scale=${cardW}:${cardH}:force_original_aspect_ratio=increase,crop=${cardW}:${cardH}${zoomFg},pad=iw+8:ih+8:4:4:color=white@0.88,pad=iw+28:ih+28:14:14:color=black@0.45[fg]`,
+      `[bg0]scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${W}:${H}:'max(0,min(iw-ow,iw*${fx}-ow/2))':'max(0,min(ih-oh,ih*${fy}-oh/2))',boxblur=28:3,eq=brightness=-0.28:saturation=0.85[bg]`,
+      `[fg0]scale=${cardW}:${cardH}:flags=lanczos+accurate_rnd,cas=0.42${zoomFg},pad=iw+8:ih+8:4:4:color=white@0.88,pad=iw+28:ih+28:14:14:color=black@0.45[fg]`,
       `[bg][fg]overlay=(W-w)/2:600-(h/2),format=yuv420p`,
     ].join(';');
     await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', vf, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
     return;
   }
 
-  // En vídeo 9:16: si se reutiliza la misma escena más adelante, desplazamos ligeramente el encuadre horizontal para dar variedad sin perder el sujeto
-  const shiftX = uses ? clamp(fx + ((uses % 2 ? 1 : -1) * 0.08), 0.1, 0.9, fx) : fx;
-  const zoom = punchVid ? `,zoompan=z='min(1.14,1+${punchVid})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${FPS}` : '';
-  await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),scale=${Math.round(W * 1.25)}:${Math.round(H * 1.25)}:force_original_aspect_ratio=increase,crop=${W}:${H}:'max(0,min(iw-ow,iw*${shiftX.toFixed(3)}-ow/2))':'max(0,min(ih-oh,ih*${fy.toFixed(3)}-oh*0.42))',fps=${FPS}${zoom},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
+  // 3) En vídeo 9:16: encuadre inteligente sobre la cara, escala ajustada sin exceso de zoom + nitidez CAS
+  const shiftX = uses ? clamp(fx + ((uses % 2 ? 1 : -1) * 0.06), 0.15, 0.85, fx) : fx;
+  const zoom = punchVid ? `,zoompan=z='min(1.10,1+${punchVid})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${FPS}` : '';
+  const vf = [
+    `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),fps=${FPS}`,
+    `scale=-2:${H}:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd`,
+    `crop=${W}:${H}:'max(0,min(iw-ow,iw*${shiftX.toFixed(3)}-ow/2))':'max(0,min(ih-oh,ih*${fy.toFixed(3)}-oh*0.38))'`,
+    `cas=0.42${zoom}`,
+    `format=yuv420p`,
+  ].join(',');
+  await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', vf, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
 }
 
 /**
@@ -423,12 +449,30 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
   for (const img of checkedImages) catalog.push({ ...img, id: `F${catalog.length + 1}`, hash: img.hash || await dhash(img.file) });
 
   if (!catalog.length) throw new Error('Sin escenas ni imágenes para montar');
-  const takes = groupTakes(catalog);
-  // El ritmo no se relaja por tener poco material: un short necesita cambios visuales frecuentes. Si faltan tomas,
-  // el editor reutiliza una parte distinta de una escena antes que dejar un plano estático de 4-5 segundos.
-  // medido (2026-10): AniDosis cambia de imagen cada ~1 s; con nuestro material, ~1,9 s cortando en las pausas
+  let takes = groupTakes(catalog);
   const target = 1.9;
   const slots = cutSlots(lines, words, script, { min: 1.3, target, max: 2.6, hook: 2 });
+
+  // Si hay menos tomas que cortes, enriquecemos inmediatamente con viñetas del manga y arte oficial
+  // para GARANTIZAR que cada corte tenga contenido fresco y coherente sin repetir escenas
+  if (takes < slots.length) {
+    log(`📚 Enriqueciendo catálogo visual con escenas del manga y arte oficial (${takes} tomas para ${slots.length} cortes)…`);
+    const extraImgs = [];
+    for (const [i, line] of script.lines.entries()) {
+      const qManga = `${animes[0] ?? ''} manga panel ${line.query || line.text.slice(0, 30)} clean`;
+      const qArt = `${animes[0] ?? ''} anime official character art ${line.query || ''} clean`;
+      for (const q of [qManga, qArt]) {
+        const found = await images(q, dir).catch(() => []);
+        const picked = await pickRelevant(found, q, `${context}. Frase: ${line.text}`, dir, { specific: true }).catch(() => []);
+        picked.slice(0, 1).forEach((f) => extraImgs.push({ kind: 'image', file: f, line: i, desc: `manga/arte: ${line.text.slice(0, 35)}`, hint: `${q}`, shot: 'foto', action: 1 }));
+      }
+      if (catalog.length + extraImgs.length >= slots.length * 1.5) break;
+    }
+    const checkedExtra = await catalogImages(extraImgs, context, dir, log);
+    for (const img of checkedExtra) catalog.push({ ...img, id: `F${catalog.length + 1}`, hash: img.hash || await dhash(img.file) });
+    takes = groupTakes(catalog);
+  }
+
   log(`🎬 Editor IA: ${slots.length} cortes de ~${target.toFixed(1)} s con ${catalog.length} planos (${takes} tomas distintas)…`);
   const { plan, climax, motion } = await planEdit({ slots, lines, catalog, context }, log);
   const byId = new Map(catalog.map((c) => [c.id, c]));
