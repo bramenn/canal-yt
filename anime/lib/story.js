@@ -120,6 +120,7 @@ const SCRIPT_SCHEMA = {
     thumb_text: { type: 'string' },
     thumb_word: { type: 'string' },
     scene_query: { type: 'string' },
+    franchise: { type: 'string' },
     yellow: { type: 'array', items: { type: 'string' } },
     red: { type: 'array', items: { type: 'string' } },
     lines: {
@@ -136,7 +137,7 @@ const SCRIPT_SCHEMA = {
       },
     },
   },
-  required: ['title', 'description', 'hashtags', 'thumb_text', 'thumb_word', 'scene_query', 'yellow', 'red', 'lines'],
+  required: ['title', 'description', 'hashtags', 'thumb_text', 'thumb_word', 'scene_query', 'franchise', 'yellow', 'red', 'lines'],
 };
 
 // duración por plataforma: Shorts premia el % visto (corto); TikTok solo paga (Creator Rewards) vídeos de más de 1 min
@@ -164,6 +165,7 @@ Devuelve:
 - "title": título al estilo AniDosis, una AFIRMACIÓN (no una pregunta: los títulos con pregunta rinden menos), palabras clave en MAYÚSCULAS, ≤ 70 caracteres, sin el nombre del canal (p. ej. «Este ANIME Se DESPIDIÓ De La MEJOR Manera POSIBLE!»).
 - "thumb_text": el texto de la miniatura (primer fotograma): 2-4 palabras en MAYÚSCULAS que despierten curiosidad o emoción sin contarlo todo y que NO repitan el título (juegan juntos: el título da contexto, la miniatura el gancho). Ej.: «NADIE LO SOPORTA», «¿CANCELADO?», «12 MINUTOS GRITANDO». "thumb_word": la palabra de "thumb_text" que va en amarillo.
 - "description": 1-2 frases para la descripción del short. "hashtags": 5-8 sin '#'.
+- "franchise": el nombre corto de la franquicia para buscar sus tráileres en YouTube («One Piece», «Attack on Titan», «Dragon Ball»), aunque la historia sea de un juego, una colaboración o un spin-off.
 - "scene_query": si la historia habla de una escena, pelea, técnica o momento concreto del anime (p. ej. el final de Cyberpunk Edgerunners, el ataque de fantasmas de Gotenks, el entrenamiento de clones de Naruto), pon la búsqueda en inglés para encontrar ese clip exacto en YouTube (p. ej. «Cyberpunk Edgerunners David ending scene», «Dragon Ball Z Gotenks Super Ghost Kamikaze Attack scene»); si es una noticia general donde basta el tráiler del anime, pon "".
 - "lines": el guion frase a frase (cada "text" de 4 a 18 palabras, en orden; juntas forman el guion completo). Para cada frase indica:
   * "show": "anime" (escenas del anime; "query" = nombre del anime para buscar su tráiler/PV en YouTube, normalmente "${story.anime}"), "imagen" (una foto específica de algo que se menciona: el director/autor, actor de voz, entrevista, producto, cartel, post o escena puntual; "query" = búsqueda concreta en inglés o español para encontrar exactamente esa imagen) o "video" (un vídeo concreto que no es el tráiler general: un videoclip, anuncio, clip viral, comparativa o escena muy específica; "query" = búsqueda exacta en YouTube de ESE vídeo).

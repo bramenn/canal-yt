@@ -21,7 +21,7 @@ import { upscaleImage } from '../../lib/upscale.js';
 export const BRAND = '@notianimes';
 const FPS = 30;
 // vídeos de reacción/análisis, fan-edits y AMVs: evitar para tener animación oficial limpia
-const REACTION = /react|reacci|reaccion|analysis|análisis|analisis|explained|review|resumen|theory|teoría|tier\s*list|parodia|roast|amv|fancam|meme|tiktok|cover/i;
+const REACTION = /react|reacci|reaccion|analysis|análisis|analisis|explained|review|resumen|theory|teoría|tier\s*list|parodia|roast|amv|fancam|meme|tiktok|cover|netflix|live.?action|imagen real/i;
 // Canales oficiales con metraje en máxima resolución y sin marcas de agua de terceros
 const OFFICIAL_CHANNELS = /crunchyroll|viz|toho\s*animation|tms|aniplex|muse\s*asia|ani-one|bandai\s*namco|tv\s*tokyo|netflix|warner\s*bros|kadokawa|shueisha|toei/i;
 const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], timeout);
@@ -455,6 +455,12 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
 
   // Si hay menos tomas que cortes, enriquecemos inmediatamente con viñetas del manga y arte oficial
   // para GARANTIZAR que cada corte tenga contenido fresco y coherente sin repetir escenas
+  // poco material propio (un juego, una colaboración): escenas del tráiler de la franquicia antes que repetir
+  const franchise = script.franchise?.trim();
+  if (takes < slots.length && franchise && !animes.some((a) => norm(a) === norm(franchise))) {
+    const t = await trailer(franchise, dir, log, context).catch((e) => { log(`⚠️ ${e.message}`); return null; });
+    if (t) { t.scenes.forEach((x) => catalog.push({ ...x, kind: 'video', anime: franchise, id: `V${catalog.length + 1}` })); takes = groupTakes(catalog); }
+  }
   if (takes < slots.length) {
     log(`📚 Enriqueciendo catálogo visual con escenas del manga y arte oficial (${takes} tomas para ${slots.length} cortes)…`);
     const extraImgs = [];
