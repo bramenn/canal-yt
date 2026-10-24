@@ -8,7 +8,7 @@ import { mkdir, stat } from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { sendJSON, readBody, sse, setEngine, getEngine } from '../lib/claude.js';
-import { migrate, listProjects, getProject, saveProject, deleteProject, q } from '../lib/db.js';
+import { migrate, listProjects, getProject, saveProject, deleteProject, q, getSetting, setSetting } from '../lib/db.js';
 import { countUsers } from '../lib/auth.js';
 import { gate, serveFrom } from '../lib/web.js';
 import { findStories, thumbText, franchiseOf } from './lib/story.js';
@@ -129,7 +129,16 @@ const task = (res, run) => sse(res, (emit) => {
 async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date.now().toString(36), learn = '', previous = null) {
   const v = voiceOf(voiceKey);
   emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
-  const p = await makeShort({ id, story, voiceId: v.id, learn }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
+  const tiktok = (await getSetting(`${TABLE}.tiktok`)) !== false; // configuración: generar o no la versión TikTok
+  const p = await makeShort({ id, story, voiceId: v.id, learn, tiktok }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal).catch(async (e) => {
+    // el montaje falló con la voz ya pagada: se guarda para «🎬 Re-montar» (misma voz, sin volver a pagar ElevenLabs)
+    if (!e.partial) throw e;
+    e.partial.voice.title = v.title;
+    await saveProject(e.partial, user.id, TABLE);
+    emit({ type: 'short', project: e.partial });
+    emit({ type: 'log', text: `💾 Guardado sin vídeo: pulsa «🎬 Re-montar» en «${e.partial.script.title}» (no vuelve a pagar la voz)` });
+    throw e;
+  });
   p.voice.title = v.title;
   if (previous?.stats) p.stats = previous.stats;
   if (previous?.created) p.created = previous.created;
@@ -146,6 +155,11 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
   try {
     const user = await gate(req, res, p, path.join(HERE, 'public'));
     if (!user) return;
+
+    if (p === '/api/config') {
+      if (req.method === 'POST') { const { tiktok } = await readBody(req); await setSetting(`${TABLE}.tiktok`, tiktok !== false); }
+      return sendJSON(res, 200, { tiktok: (await getSetting(`${TABLE}.tiktok`)) !== false });
+    }
 
     if (p === '/api/ai-status' && req.method === 'GET') {
       return sendJSON(res, 200, { engine: getEngine(), model: getEngine() === 'codex' ? (process.env.CODEX_MODEL || null) : null });

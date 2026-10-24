@@ -133,6 +133,8 @@ button.primary:hover { background: #ff8d3a; }
 .comment-text { min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
 .auto { display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap; }
 .auto select { width: auto; }
+.auto .toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.auto .toggle input { width: auto; margin: 0; }
 @media (max-width: 760px) {
   main { padding: 16px 16px 80px; }
   .hero h1 { font-size: 28px; }

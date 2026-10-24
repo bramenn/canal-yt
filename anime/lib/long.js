@@ -10,13 +10,14 @@ import { claudeStep } from '../../lib/claude.js';
 import { run } from '../../lib/ytdlp.js';
 import { downloadImages as images } from '../../lib/brave.js';
 import { pickRelevant } from '../../lib/imagepick.js';
-import { cutSlots, planEdit, planTransitions, applyPairTransitions, sfxTrack, dhash, groupTakes, enforce, tightenVoice } from '../../lib/editor.js';
+import { cutSlots, planEdit, reviewEdit, planTransitions, applyPairTransitions, sfxTrack, dhash, groupTakes, enforce, tightenVoice, finalReview, fmtQa } from '../../lib/editor.js';
 import { FONTS } from '../../lib/thumbnail.js';
 import { assTime, assEsc, YELLOW, RED, WHITE } from '../../lib/subs.js';
 import { writeCopy } from '../../lib/social.js';
 import { upscaleImage } from '../../lib/upscale.js';
 import { trailer, newsImages, catalogImages, lineTimes, BRAND } from './montage.js';
 import { makeThumb16x9 } from './thumb.js';
+import { episodeScenes } from './episodes.js';
 
 const LW = 1920, LH = 1080, FPS = 30, CARD_DUR = 2.0;
 const ff = (args, timeout = 900000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], timeout);
@@ -39,20 +40,23 @@ const PLAN_SCHEMA = {
     intro_hook: { type: 'string' },
     chapters: {
       type: 'array',
-      minItems: 6,
-      maxItems: 6,
+      minItems: 10,
+      maxItems: 10,
       items: {
         type: 'object',
         properties: {
           number: { type: 'number' },
           heading: { type: 'string' },
           anime: { type: 'string' },
+          nyaa: { type: 'string' },
+          episode: { type: 'number' },
+          moment: { type: 'string' },
           scene_query: { type: 'string' },
           angle: { type: 'string' },
           facts: { type: 'string' },
           sources: { type: 'array', items: { type: 'string' } },
         },
-        required: ['number', 'heading', 'anime', 'scene_query', 'angle', 'facts', 'sources'],
+        required: ['number', 'heading', 'anime', 'nyaa', 'episode', 'moment', 'scene_query', 'angle', 'facts', 'sources'],
       },
     },
   },
@@ -61,12 +65,12 @@ const PLAN_SCHEMA = {
 
 export async function findLongPlan({ topic = '', avoid = [], recentFranchises = [], learn = '' } = {}, emit, track) {
   const today = new Date().toISOString().slice(0, 10);
-  const prompt = `Hoy es ${today}. Eres el director de contenidos de un canal de YouTube de anime en español (${BRAND}) y vas a planificar un VÍDEO LARGO HORIZONTAL (16:9) de 8 a 10 minutos, estructurado en una introducción potente y 6 CAPÍTULOS llenos de datos reales y verificados.
+  const prompt = `Hoy es ${today}. Eres el director de contenidos de un canal de YouTube de anime en español (${BRAND}) y vas a planificar un VÍDEO LARGO HORIZONTAL (16:9) de 8 a 10 minutos, con formato TOP 10 EN CUENTA ATRÁS al estilo WatchMojo: una introducción potente y 10 PUESTOS (del #10 al #1), cada uno un MOMENTO CONCRETO de un episodio de anime de TV, con datos reales y verificados.
 
-${topic.trim() ? `TEMA PEDIDO POR EL USUARIO: «${topic.trim()}»\nDesarrolla exactamente este tema o franquicia con los 6 mejores casos/capítulos documentados.` : `Elige el tema con MAYOR potencial de búsqueda y retención en YouTube (puede ser un análisis/recopilación de 6 momentos, secretos, técnicas o decisiones de una gran franquicia como One Piece, Jujutsu Kaisen, Demon Slayer, Hunter x Hunter, Bleach, Attack on Titan, Chainsaw Man, Death Note, Solo Leveling; o una recopilación multi-anime de 6 casos unidos por un hilo fascinante).
+${topic.trim() ? `TEMA PEDIDO POR EL USUARIO: «${topic.trim()}»\nHaz el top 10 de este tema o franquicia.` : `Elige el tema con MAYOR potencial de búsqueda y retención en YouTube (un «Top 10 momentos/peleas/muertes/giros/técnicas…» de una gran franquicia como One Piece, Jujutsu Kaisen, Demon Slayer, Hunter x Hunter, Bleach, Attack on Titan, Chainsaw Man, Death Note, Solo Leveling; o un top multi-anime unido por un hilo fascinante: «Top 10 traiciones más brutales del anime», «Top 10 veces que el protagonista perdió»).
 ${recentFranchises.length ? `\nFRANQUICIAS EN ENFRIAMIENTO (NO las elijas como anime principal para asegurar variedad en el canal): ${recentFranchises.join(', ')}.\n` : ''}`}
 
-Investiga en la web (WebSearch y WebFetch) para que cada uno de los 6 capítulos tenga hechos 100 % reales y comprobados: números de episodio o capítulo de manga, nombres exactos de personajes, técnicas, directores, estudios, fechas o declaraciones oficiales. No inventes nada.
+Investiga en la web (WebSearch y WebFetch) para que cada uno de los 10 puestos tenga hechos 100 % reales y comprobados: número de episodio del anime (OBLIGATORIO, comprobado en una wiki o lista de episodios), nombres exactos de personajes, técnicas, directores, estudios, fechas o declaraciones oficiales. No inventes nada.
 ${avoid.length ? `\nNO repitas estos temas ya tratados:\n${avoid.slice(0, 30).map((x) => `- ${x}`).join('\n')}\n` : ''}${learn}
 
 Devuelve:
@@ -76,10 +80,13 @@ Devuelve:
 - "main_anime": nombre oficial del anime principal del vídeo (para la miniatura).
 - "angle": resumen en 1 frase del hilo conductor del vídeo.
 - "intro_hook": qué gancho, contraste o pregunta abrirá los primeros 40 segundos del vídeo para retener al espectador.
-- "chapters": exactamente 6 capítulos (numerados del 1 al 6). En cada uno:
-  - "number": 1..6,
+- "chapters": exactamente 10 puestos EN ORDEN DE APARICIÓN: el primero es el #10 y el último el #1 (el mejor, guardado para el final). Solo momentos que ocurren en un episodio del anime de TV (no películas, no solo manga). En cada uno:
+  - "number": el puesto (10, 9, 8 … 1),
   - "heading": título corto del capítulo (3-6 palabras, sin poner el número delante),
-  - "anime": nombre oficial del anime de ese capítulo,
+  - "anime": nombre oficial del anime de ese puesto,
+  - "nyaa": título en rōmaji tal como lo nombran los releases de fansubs en nyaa.si, CON la temporada si sus episodios se numeran por temporada (p. ej. "Kimetsu no Yaiba", "Jujutsu Kaisen", "Shingeki no Kyojin S3", "Boku no Hero Academia", "One Piece", "Naruto Shippuuden", "Hunter x Hunter (2011)"),
+  - "episode": número de episodio donde ocurre el momento, numerado como en esos releases (One Piece y Naruto: absoluto; series por temporadas: dentro de la temporada indicada en "nyaa"),
+  - "moment": qué pasa exactamente en pantalla en ese episodio, en inglés y con los nombres que salen en los subtítulos en inglés (p. ej. "Tanjiro uses Hinokami Kagura with Nezuko's Blood Demon Art to cut Rui's threads"),
   - "scene_query": búsqueda concreta en inglés para encontrar en YouTube el clip o escena exacta de ese capítulo (p. ej. "Goku feet Kamehameha vs Piccolo", "Rock Lee drops weights vs Gaara", "Gojo Hollow Purple Toji"),
   - "angle": el giro o dato sorprendente de ese capítulo,
   - "facts": todos los datos concretos verificados (episodio, capítulo del manga, nombres, contexto, consecuencias, fechas),
@@ -89,7 +96,6 @@ Devuelve:
     prompt,
     schema: PLAN_SCHEMA,
     system: 'Eres investigador y guionista jefe de documentales y vídeos largos de anime para YouTube. Solo afirmas datos verificados.',
-    model: 'sonnet',
     effort: 'medium',
     tools: ['WebSearch', 'WebFetch'],
   }, emit, track);
@@ -140,32 +146,31 @@ REGLAS DE ESTILO Y RITMO:
     prompt,
     schema: BLOCK_SCHEMA,
     system: 'Eres guionista experto en retención de vídeos largos de YouTube de anime.',
-    model: 'sonnet',
     effort: 'low',
     tools: [],
   }, emit, track);
   return { block: ev.data, cost: ev.cost ?? 0 };
 }
 
-export async function writeChapterScript(ch, plan, { isLast = false, minWords = 230, maxWords = 255 } = {}, emit, track) {
-  const prompt = `Escribe el guion narrado del CAPÍTULO ${ch.number} («${ch.heading}») del vídeo largo «${plan.title}».
-ANIME DEL CAPÍTULO: ${ch.anime}
-ESCENA CLAVE: ${ch.scene_query}
+export async function writeChapterScript(ch, plan, { isLast = false, minWords = 135, maxWords = 160 } = {}, emit, track) {
+  const prompt = `Escribe el guion narrado del PUESTO #${ch.number} («${ch.heading}») del top 10 «${plan.title}» (cuenta atrás del #10 al #1).
+ANIME: ${ch.anime} (episodio ${ch.episode})
+MOMENTO QUE SE VERÁ EN PANTALLA: ${ch.moment}
 GIRO / ENFOQUE: ${ch.angle}
 DATOS VERIFICADOS: ${ch.facts}
 
 EXTENSIÓN OBLIGATORIA para alcanzar los 8-10 minutos totales del vídeo:
-- Este capítulo debe tener entre **${minWords} y ${maxWords} palabras en total** (18 a 23 frases de 10-14 palabras cada una, ~80-90 segundos de narración).
+- Este puesto debe tener entre **${minWords} y ${maxWords} palabras en total** (${Math.round(minWords / 12)} a ${Math.round(maxWords / 12)} frases de 10-14 palabras cada una).
 - No rellenes con paja: desarrolla la historia paso a paso como un mini-documental apasionante:
-  1. Abre el capítulo entrando de lleno en la escena o el problema concreto de ${ch.anime}.
-  2. Explica el contexto dentro de la historia (en qué arco, episodio o capítulo ocurre y qué estaba en juego).
+  1. Abre con «Número ${ch.number}» y entra de lleno en la escena de ${ch.anime}.
+  2. Explica el contexto dentro de la historia (en qué arco y episodio ocurre y qué estaba en juego). Narra el momento EN EL ORDEN en que pasa en el episodio: se verá en pantalla mientras hablas.
   3. Revela el detalle técnico, secreto de producción, regla o giro exacto con todos los nombres y cifras reales.
   4. Cuenta qué consecuencias tuvo en la trama o en los fans y por qué este caso es tan especial.
-  ${isLast ? '5. Como este es el ÚLTIMO capítulo del vídeo, cierra las últimas 2-3 frases con una conclusión potente del vídeo entero y una pregunta directa para que la audiencia debata en los comentarios.' : '5. Cierra el capítulo con una frase contundente que deje con ganas de pasar al siguiente caso.'}
+  ${isLast ? '5. Como este es el PUESTO #1, el último del vídeo, cierra las últimas 2-3 frases con una conclusión potente del vídeo entero y una pregunta directa para que la audiencia debata en los comentarios.' : '5. Cierra con una frase contundente que deje con ganas de ver qué ocupa el siguiente puesto.'}
 
 VISUALES EN 16:9 ("lines"):
 - En cada frase indica:
-  - "show": "anime" para escenas en movimiento del anime (${ch.anime}); "video" si pides el clip exacto de "${ch.scene_query}"; "imagen" (1 a 3 veces en el capítulo) para mostrar una prueba visual concreta, comparativa, autor o arte oficial.
+  - "show": "anime" en casi todas las frases (se verán las escenas del propio episodio ${ch.episode}); "imagen" como mucho 1 vez, solo para una prueba que no sale en el episodio (autor, comparativa, dato real).
   - "query": si show="anime", el nombre oficial "${ch.anime}". Si show="video", "${ch.scene_query}". Si show="imagen", una búsqueda precisa en inglés sin pedir portadas ni páginas de manga con texto.
   - "visual": descripción concreta de lo que debe verse en pantalla durante esa frase (≤ 12 palabras).
 - Elige 10-14 palabras clave en "yellow" y 3-5 de máximo impacto en "red".`;
@@ -174,7 +179,6 @@ VISUALES EN 16:9 ("lines"):
     prompt,
     schema: BLOCK_SCHEMA,
     system: 'Eres narrador y documentalista de anime en español neutro. Tus capítulos enganchan de principio a fin con datos reales.',
-    model: 'sonnet',
     effort: 'low',
     tools: [],
   }, emit, track);
@@ -183,7 +187,7 @@ VISUALES EN 16:9 ("lines"):
 
 // ---------- 3) Montaje 16:9 (1920×1080) ----------
 /** Tarjeta animada de inicio de capítulo (2,0 s, 1920×1080, 30 fps) sobre fotograma oscurecido del anime. */
-async function renderChapterCard({ number, heading, anime, bgFile, dir, out }) {
+async function renderChapterCard({ number, heading, anime, bgFile, dir, out, top = false }) {
   const frames = Math.round(CARD_DUR * FPS);
   const assFile = path.join(dir, `card-ch-${number}.ass`);
   const titleUp = assEsc(String(heading).toUpperCase());
@@ -203,7 +207,7 @@ Style: AnimeTag,Anton,44,&H00E8E8E8&,&H00E8E8E8&,&H00000000,&H80000000,0,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 2,0:00:00.00,${assTime(CARD_DUR)},Kicker,,0,0,0,,{\\pos(960,415)\\fad(140,180)}CAPÍTULO ${number}
+Dialogue: 2,0:00:00.00,${assTime(CARD_DUR)},Kicker,,0,0,0,,{\\pos(960,415)\\fad(140,180)}${top ? `PUESTO #${number}` : `CAPÍTULO ${number}`}
 Dialogue: 3,0:00:00.00,${assTime(CARD_DUR)},Head,,0,0,0,,{\\pos(960,540)\\fscx82\\fscy82\\t(0,180,\\fscx100\\fscy100)\\fad(120,180)}${titleUp}
 Dialogue: 2,0:00:00.08,${assTime(CARD_DUR)},AnimeTag,,0,0,0,,{\\pos(960,665)\\fad(180,180)}${animeUp}
 `;
@@ -264,8 +268,13 @@ async function renderCut16x9(slot, item, uses, out) {
   const slow = Math.max(1, dur / Math.max(0.5, len));
   const punchVid = punchAt == null ? '' : `if(gte(in,${punchAt}),0.10*(1-pow(max(0,1-(in-${punchAt})/${punchDur}),3)),0)`;
   const zoom = punchVid ? `,zoompan=z='min(1.12,1+${punchVid})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${LW}x${LH}:fps=${FPS}` : '';
-  // Escala ligeramente mayor (2080×1170) y recorta la franja inferior por si el PV traía subtítulos quemados abajo + CAS nitidez
-  await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),scale=2080:1170:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${LW}:${LH}:(iw-ow)/2:0,cas=0.40,fps=${FPS}${zoom},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
+  // series antiguas en 4:3 (Naruto, Dragon Ball…): la imagen entera al centro sobre la misma escena desenfocada, sin cortar caras
+  const [vw, vh] = (await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', item.file]).catch(() => '16,9')).trim().split(',').map(Number);
+  const frame = vw / vh < 1.5
+    ? `split[a][b];[a]scale=${LW}:${LH}:force_original_aspect_ratio=increase,crop=${LW}:${LH},boxblur=28:2,eq=brightness=-0.28:saturation=0.8[bg];[b]scale=-2:${LH}:flags=lanczos,cas=0.40[fg];[bg][fg]overlay=(W-w)/2:0`
+    // Escala ligeramente mayor (2080×1170) y recorta la franja inferior por si el PV traía subtítulos quemados abajo + CAS nitidez
+    : `scale=2080:1170:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${LW}:${LH}:(iw-ow)/2:0,cas=0.40`;
+  await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),${frame},fps=${FPS}${zoom},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
 }
 
 /** Subtítulos 16:9 (grupos de 3-5 palabras en la parte inferior) + insignia superior del capítulo/anime + marca @notianimes. */
@@ -326,15 +335,18 @@ async function ambientBed(total, cardRanges, dir) {
 }
 
 /** Descarga/reutiliza el catálogo visual de un bloque (Intro o Capítulo). */
-async function buildBlockCatalog(block, animeDefault, sceneQuery, sourcesUrls, context, dir, log, trailerCache) {
+async function buildBlockCatalog(block, animeDefault, sceneQuery, sourcesUrls, context, dir, log, trailerCache, epScenes = []) {
   const catalog = [];
   const rawImages = [];
-  const animes = [animeDefault].filter(Boolean);
+  epScenes.forEach((x) => catalog.push({ ...x, kind: 'video', anime: x.anime ?? animeDefault, id: `V${catalog.length + 1}` }));
+  // con el episodio exacto, los tráileres genéricos solo meterían escenas que no corresponden
+  const enough = epScenes.length >= 10;
+  const animes = enough ? [] : [animeDefault].filter(Boolean);
   // Las frases «anime» con una búsqueda de escena concreta (no el nombre de la serie) no disparan un tráiler nuevo cada una:
   // solo se catalogan hasta 2 clips exactos distintos por bloque (más el scene_query del capítulo).
   const exactQueries = [...new Set(block.lines
     .filter((l) => l.show === 'video' || (l.show === 'anime' && l.query && norm(l.query) !== norm(animeDefault) && l.query.split(/\s+/).length > 2))
-    .map((l) => l.query))].slice(0, 2);
+    .map((l) => l.query))].slice(0, enough ? 0 : 4);
   for (const q of animes) {
     const key = norm(q);
     if (!trailerCache.has(key)) {
@@ -348,8 +360,8 @@ async function buildBlockCatalog(block, animeDefault, sceneQuery, sourcesUrls, c
       rawImages.push({ kind: 'image', file: f, anime: q, desc: `arte oficial de ${q}`, hint: `arte oficial de ${q}`, who: 'personajes del anime', shot: 'plano medio', action: 1 });
     }
   }
-  if (sceneQuery?.trim() && !animes.some((a) => norm(a) === norm(sceneQuery))) exactQueries.unshift(sceneQuery.trim());
-  for (const sq of [...new Set(exactQueries)].slice(0, 3)) {
+  if (!enough && sceneQuery?.trim() && !animes.some((a) => norm(a) === norm(sceneQuery))) exactQueries.unshift(sceneQuery.trim());
+  for (const sq of [...new Set(exactQueries)].slice(0, 5)) {
     if (animes.some((a) => norm(a) === norm(sq))) continue;
     const key = `exact:${norm(sq)}`;
     if (!trailerCache.has(key)) {
@@ -392,21 +404,44 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
   const silenceCard = path.join(dir, 'silence-card.wav');
   await ff(['-f', 'lavfi', '-i', `anullsrc=r=44100:cl=stereo:d=${CARD_DUR}`, '-ac', '2', '-ar', '44100', silenceCard]);
 
+  // medido (Naruto, 6 trampas): el 41 % de los cortes repetía tomas, una vez en CADA capítulo, porque todos comparten los
+  // tráileres genéricos y cada capítulo se editaba sin saber qué usaron los anteriores
+  const usedScenes = new Set();
+  // Top 10 en cuenta atrás (#10 → #1) frente a los vídeos por capítulos de antes (1 → 6)
+  const top = plan.chapters?.[0]?.number > plan.chapters?.at(-1)?.number;
+  const sceneKey = (c) => (c.kind === 'video' ? `${c.file}@${(+c.s).toFixed(1)}` : c.file);
+  // Top 10: escenas del episodio exacto de cada puesto; si no se consigue, ese puesto vuelve a los tráileres
+  const epMat = new Map();
+  // de 3 en 3: cada torrent va a ~5 MB/s y la conexión da para más (en fila, un Top 10 tardaba ~1 h solo en bajar)
+  const pending = blocks.filter((b) => b.episode);
+  await Promise.all([0, 1, 2].map(async () => {
+    for (let b; (b = pending.shift());) {
+      if (signal?.aborted) throw new Error('Cancelado');
+      log(`🧲 #${b.number} ${b.anime}: episodio ${b.episode}…`);
+      epMat.set(b.key, await episodeScenes(b, dir, log, `${b.anime}: ${b.heading}`)
+        .catch((e) => { log(`⚠️ #${b.number} sin episodio (${e.message.slice(0, 120)}): uso tráileres`); return null; }));
+    }
+  }));
+  // la intro adelanta lo mejor de cada puesto
+  const teaser = [...epMat.entries()].flatMap(([key, m]) => {
+    const b = blocks.find((x) => x.key === key);
+    return (m?.scenes ?? []).toSorted((x, y) => (y.action ?? 0) - (x.action ?? 0)).slice(0, 6).map((x) => ({ ...x, anime: b.anime, desc: `#${b.number} ${b.anime}, ${x.desc}` }));
+  });
   for (const [bi, b] of blocks.entries()) {
     if (signal?.aborted) throw new Error('Cancelado');
     (b.script.yellow ?? []).forEach((w) => allYellow.add(w));
     (b.script.red ?? []).forEach((w) => allRed.add(w));
     const context = `${b.anime}: ${b.heading}. ${b.angle || plan.angle}`.slice(0, 1200);
     log(`🎞 Preparando material 16:9 del bloque ${bi === 0 ? 'Introducción' : `Cap. ${b.number} (${b.anime})`}…`);
-    const catalog = await buildBlockCatalog(b.script, b.anime, b.scene_query, b.sources ?? [], context, dir, log, trailerCache);
-    if (!catalog.length) throw new Error(`Sin material visual para el bloque ${b.heading}`);
+    const fullCatalog = await buildBlockCatalog(b.script, b.anime, b.scene_query, b.sources ?? [], context, dir, log, trailerCache, bi === 0 ? teaser : epMat.get(b.key)?.scenes ?? []);
+    if (!fullCatalog.length) throw new Error(`Sin material visual para el bloque ${b.heading}`);
 
     // Si es un capítulo numerado (> 0), insertamos primero su tarjeta de capítulo de 2,0 s
     if (b.number > 0) {
       chaptersTimeline.push({ number: b.number, heading: b.heading, anime: b.anime, start: cursor });
       const cardOut = path.join(dir, `seg-card-${b.number}.mp4`);
-      const bgSample = catalog.find((c) => c.kind === 'video')?.file ?? catalog[0]?.file;
-      await renderChapterCard({ number: b.number, heading: b.heading, anime: b.anime, bgFile: bgSample, dir, out: cardOut });
+      const bgSample = fullCatalog.find((c) => c.kind === 'video')?.file ?? fullCatalog[0]?.file;
+      await renderChapterCard({ number: b.number, heading: b.heading, anime: b.anime, bgFile: bgSample, dir, out: cardOut, top });
       videoParts.push(cardOut);
       audioSegments.push(silenceCard);
       cardRanges.push([cursor, cursor + CARD_DUR]);
@@ -420,7 +455,12 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
     const segStart = cursor;
     const dur = b.duration;
     const lines = lineTimes(b.script.lines, b.words, dur);
-    const slots = cutSlots(lines, b.words, b.script, { min: 1.8, target: 2.6, max: 3.6, hook: bi === 0 ? 2 : 0 });
+    // en un vídeo largo el plano respira más que en un short (WatchMojo: 3-4 s); con 2,6 s se agotaban los planos del episodio y se repetían
+    const slots = cutSlots(lines, b.words, b.script, { min: 2.2, target: 3.2, max: 4.6, hook: bi === 0 ? 2 : 0 });
+    // lo ya usado en otros capítulos solo vuelve si falta material nuevo, y marcado para que el editor lo deje al final
+    const fresh = fullCatalog.filter((c) => !usedScenes.has(sceneKey(c)));
+    const catalog = fresh.length >= slots.length ? fresh
+      : [...fresh, ...fullCatalog.filter((c) => usedScenes.has(sceneKey(c))).map((c) => ({ ...c, desc: `(ya salió en otro capítulo: úsalo solo si no hay otra opción) ${c.desc ?? ''}` }))];
     const takes = groupTakes(catalog);
     log(`🎬 Editando ${bi === 0 ? 'Introducción' : `Cap. ${b.number}`} (${slots.length} cortes 16:9 con ${catalog.length} planos / ${takes} tomas)…`);
     const { plan: editPlan, climax, motion } = await planEdit({ slots, lines, catalog, context }, log);
@@ -436,6 +476,17 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
       await renderCut16x9(slots[i], byId.get(id) ?? catalog[0], k, out);
       parts.push(out);
     }
+    // revisión con IA (como en los shorts): rehace los cortes que no encajan con lo que se dice o repiten toma
+    const frames = [];
+    for (const [i, p] of parts.entries()) { const f = `${p}.jpg`; await ff(['-ss', String((slots[i].e - slots[i].s) / 2), '-i', p, '-frames:v', '1', f]); frames.push(f); }
+    const fixes = await reviewEdit({ frames, slots, lines, plan: editPlan, catalog, context, dir, wide: true }).catch(() => ({}));
+    for (const [i, f] of Object.entries(fixes)) editPlan[i] = f.id;
+    const before = [...editPlan];
+    enforce(editPlan, catalog, { slotLines: slots.map((x) => x.line) }).plan.forEach((id, i) => { editPlan[i] = id; });
+    for (let i = 0; i < editPlan.length; i++) if (fixes[i] || editPlan[i] !== before[i]) await renderCut16x9(slots[i], byId.get(editPlan[i]) ?? catalog[0], 1, parts[i]);
+    if (Object.keys(fixes).length) log(`🔁 Revisión: ${Object.keys(fixes).length} corte${Object.keys(fixes).length === 1 ? '' : 's'} rehecho${Object.keys(fixes).length === 1 ? '' : 's'}`);
+    // lo que adelanta la intro vuelve a salir en su puesto
+    if (bi > 0) editPlan.forEach((id) => byId.get(id) && usedScenes.add(sceneKey(byId.get(id))));
     const tx = planTransitions({ slots, lines, plan: editPlan, byId, motion, climax });
     await applyPairTransitions(parts, slots, tx.transitions, { fps: FPS, w: LW, h: LH });
     videoParts.push(...parts);
@@ -452,9 +503,23 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
     segmentsMeta.push({
       s: segStart,
       e: segStart + dur,
-      label: b.number > 0 ? `Cap. ${b.number} · ${b.anime}` : plan.main_anime,
+      label: b.number > 0 ? `${top ? '#' : 'Cap. '}${b.number} · ${b.anime}` : plan.main_anime,
     });
     cursor += dur;
+
+    // 2-4 s del audio original (grito, golpe, frase icónica) al cerrar el puesto, con su traducción como subtítulo
+    const burst = epMat.get(b.key)?.burst;
+    if (burst && existsSync(burst.file)) {
+      const bd = Math.round(burst.dur * FPS) / FPS;
+      const bv = path.join(dir, `seg-burst-${b.number}.mp4`), ba = path.join(dir, `seg-burst-${b.number}.wav`);
+      await ff(['-i', burst.file, '-an', '-vf', `split[a][b];[a]scale=${LW}:${LH}:force_original_aspect_ratio=increase,crop=${LW}:${LH},boxblur=28:2,eq=brightness=-0.28:saturation=0.8[bg];[b]scale=-2:${LH}:flags=lanczos,scale='min(iw,${LW})':-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=${FPS},format=yuv420p`, '-frames:v', String(Math.round(bd * FPS)), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', bv]);
+      await ff(['-i', burst.file, '-vn', '-af', `loudnorm=I=-16:TP=-1.5,apad,afade=t=in:d=0.08,afade=t=out:st=${(bd - 0.25).toFixed(2)}:d=0.25`, '-t', String(bd), '-ac', '2', '-ar', '44100', ba]);
+      videoParts.push(bv);
+      audioSegments.push(ba);
+      const ws = String(burst.es ?? '').split(/\s+/).filter(Boolean);
+      ws.forEach((w, i) => allWords.push({ w, s: +(cursor + (bd * i) / ws.length).toFixed(3), e: +(cursor + (bd * (i + 1)) / ws.length).toFixed(3) }));
+      cursor += bd;
+    }
   }
 
   const total = +(cursor + 0.4).toFixed(2);
@@ -476,7 +541,7 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
 
   // Miniatura 16:9
   const mainKey = norm(plan.main_anime);
-  const mainScenes = trailerCache.get(mainKey)?.scenes ?? [...trailerCache.values()].find((v) => v?.scenes?.length)?.scenes ?? [{ file: videoParts[0], s: 0, e: 1 }];
+  const mainScenes = trailerCache.get(mainKey)?.scenes ?? [...epMat.values()].find((m) => m?.scenes?.length)?.scenes ?? [...trailerCache.values()].find((v) => v?.scenes?.length)?.scenes ?? [{ file: videoParts[0], s: 0, e: 1 }];
   thumb ??= await makeThumb16x9({
     script: { title: plan.title, thumb_text: plan.thumb_text, thumb_word: plan.thumb_word },
     anime: plan.main_anime,
@@ -505,7 +570,11 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
     '-c:a', 'aac', '-b:a', '192k', '-t', String(total), '-movflags', '+faststart', final,
   ], 1800000);
 
-  return { video: final, thumb, duration: Math.round(total), chaptersTimeline };
+  // la intro adelanta escenas de los capítulos a propósito: esas no cuentan como repetición
+  const qa = await finalReview(final, total).catch(() => null);
+  const introEnd = chaptersTimeline[1]?.start ?? 0;
+  if (qa) { qa.repeats = qa.repeats.filter(([a]) => a >= introEnd); log(fmtQa(qa)); }
+  return { video: final, thumb, duration: Math.round(total), chaptersTimeline, qa };
 }
 
 // ---------- 4) Orquestador completo (makeLong y remountLong) ----------
@@ -528,16 +597,17 @@ async function voiceAndAlignBlock(blockKey, id, script, voiceId, { tts, aligner 
 }
 
 export function formatChaptersCopy(chaptersTimeline = []) {
-  return chaptersTimeline.map((c) => `${fmtChapterTime(c.start)} ${c.number > 0 ? `${c.number}. ${c.heading} (${c.anime})` : c.heading}`).join('\n');
+  const top = chaptersTimeline[1]?.number > chaptersTimeline.at(-1)?.number;
+  return chaptersTimeline.map((c) => `${fmtChapterTime(c.start)} ${c.number > 0 ? `${top ? '#' : ''}${c.number}${top ? '' : '.'} ${c.heading} (${c.anime})` : c.heading}`).join('\n');
 }
 
 export async function makeLong({ id, topic = '', voiceId, learn = '', avoid = [], recentFranchises = [] }, deps, emit, track, signal) {
   const log = (text) => emit({ type: 'log', text });
   let cost = 0;
-  log(`🔎 Investigando tema y estructurando 6 capítulos para vídeo largo (8-10 min)…`);
+  log(`🔎 Investigando tema y estructurando el Top 10 del vídeo largo (8-10 min)…`);
   const { plan, cost: c0 } = await findLongPlan({ topic, avoid, recentFranchises, learn }, emit, track);
   cost += c0;
-  log(`📋 «${plan.title}» · 6 capítulos: ${plan.chapters.map((c) => `${c.number}. ${c.anime}`).join(' · ')}`);
+  log(`📋 «${plan.title}» · Top 10: ${plan.chapters.map((c) => `#${c.number} ${c.anime} ep. ${c.episode}`).join(' · ')}`);
 
   const blocks = [];
   log('✍️ Escribiendo introducción con gancho…');
@@ -560,8 +630,9 @@ export async function makeLong({ id, topic = '', voiceId, learn = '', avoid = []
     if (signal?.aborted) throw new Error('Cancelado');
     const elapsed = blocks.reduce((s, x) => s + x.duration + (x.number > 0 ? CARD_DUR : 0), 0);
     const remainingChapters = plan.chapters.length - idx;
-    const neededSecsPerChapter = Math.max(76, (505 - elapsed) / remainingChapters);
-    const minWords = Math.min(265, Math.max(220, Math.round(neededSecsPerChapter * 2.95)));
+    // ~9 min en total: cada puesto lleva además su tarjeta y ~3 s de audio original
+    const neededSecsPerChapter = Math.max(44, (535 - elapsed) / remainingChapters - CARD_DUR - 3);
+    const minWords = Math.min(165, Math.max(125, Math.round(neededSecsPerChapter * 2.95)));
     const maxWords = minWords + 25;
     log(`✍️ Guion del Capítulo ${ch.number}/${plan.chapters.length}: «${ch.heading}» (${ch.anime})…`);
     const { block: chScript, cost: cCh } = await writeChapterScript(ch, plan, {
@@ -576,6 +647,9 @@ export async function makeLong({ id, topic = '', voiceId, learn = '', avoid = []
       number: ch.number,
       heading: ch.heading,
       anime: ch.anime,
+      nyaa: ch.nyaa,
+      episode: ch.episode,
+      moment: ch.moment,
       scene_query: ch.scene_query,
       angle: ch.angle,
       facts: ch.facts,
@@ -601,7 +675,9 @@ async function finishLong({ id, plan, blocks, voiceId, cost = 0 }, deps, emit, t
   const log = (text) => emit({ type: 'log', text });
   await saveDraft({ id, plan, blocks, voiceId, cost }, deps.mediaDir);
   const dir = path.join(deps.mediaDir, id);
-  const out = await montageLong({ plan, blocks, dir }, log, signal);
+  // al reanudar o rehacer, la miniatura que ya había se conserva
+  const thumb = existsSync(path.join(dir, 'thumb.jpg')) ? { full: path.join(dir, 'thumb-4k.jpg'), small: path.join(dir, 'thumb.jpg') } : null;
+  const out = await montageLong({ plan, blocks, dir, thumb }, log, signal);
   const chaptersText = formatChaptersCopy(out.chaptersTimeline);
 
   const about = `Vídeo largo de YouTube (16:9) sobre ${plan.main_anime}: «${plan.title}». Enfoque: ${plan.angle}.\nCapítulos:\n${chaptersText}`;
@@ -627,6 +703,7 @@ async function finishLong({ id, plan, blocks, voiceId, cost = 0 }, deps, emit, t
     plan,
     blocks: blocks.map(({ voiceFile, words, ...rest }) => rest),
     chaptersTimeline: out.chaptersTimeline,
+    qa: out.qa,
     script: {
       title: plan.title,
       thumb_text: plan.thumb_text,
@@ -679,5 +756,6 @@ export async function remountLong(pj, { tts, aligner, mediaDir }, log = () => {}
   const out = await montageLong({ plan: pj.plan, blocks, dir, thumb }, log, signal);
   pj.duration = out.duration;
   pj.chaptersTimeline = out.chaptersTimeline;
+  pj.qa = out.qa;
   return pj;
 }

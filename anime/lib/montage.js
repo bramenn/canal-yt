@@ -11,17 +11,20 @@ import { run, ytdlp, search } from '../../lib/ytdlp.js';
 import { downloadImages as images } from '../../lib/brave.js';
 import { claudeStep } from '../../lib/claude.js';
 import { pickRelevant } from '../../lib/imagepick.js';
-import { cutSlots, planEdit, reviewEdit, planTransitions, applyPairTransitions, sfxTrack, dhash, groupTakes, enforce } from '../../lib/editor.js';
+import { cutSlots, planEdit, reviewEdit, planTransitions, applyPairTransitions, sfxTrack, dhash, groupTakes, enforce, finalReview, fmtQa } from '../../lib/editor.js';
 import { FONTS } from '../../lib/thumbnail.js';
 import { W, H, wordEvents, assDoc } from '../../lib/subs.js';
 import { makeThumb } from './thumb.js';
 import { computeSmartFraming } from '../../lib/animeface.js';
 import { upscaleImage } from '../../lib/upscale.js';
+import { episodeScenes } from './episodes.js';
 
 export const BRAND = '@notianimes';
 const FPS = 30;
 // vídeos de reacción/análisis, fan-edits y AMVs: evitar para tener animación oficial limpia
 const REACTION = /react|reacci|reaccion|analysis|análisis|analisis|explained|review|resumen|theory|teoría|tier\s*list|parodia|roast|amv|fancam|meme|tiktok|cover|netflix|live.?action|imagen real/i;
+// gameplay con la interfaz del juego (Naruto Storm, etc.): no sirve como escena del anime salvo que se pida ese clip exacto
+const GAME = /gameplay|walkthrough|\bstorm\s*\d|ultimate ninja|\bps[45]\b|xbox|\bpc\b.*\bgame\b|video ?game|videojuego/i;
 // Canales oficiales con metraje en máxima resolución y sin marcas de agua de terceros
 const OFFICIAL_CHANNELS = /crunchyroll|viz|toho\s*animation|tms|aniplex|muse\s*asia|ani-one|bandai\s*namco|tv\s*tokyo|netflix|warner\s*bros|kadokawa|shueisha|toei/i;
 const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], timeout);
@@ -71,7 +74,7 @@ export async function trailer(query, dir, log, context = '', exact = false) {
     const rawCands = await search(q, 10).catch(() => []);
     // Priorizar canales oficiales (Crunchyroll, Viz, Toho, etc.) y filtrar AMVs/reacciones
     const cands = rawCands
-      .filter((x) => x.duration >= minDur && x.duration <= maxDur && !seen.has(x.id) && !REACTION.test(x.title))
+      .filter((x) => x.duration >= minDur && x.duration <= maxDur && !seen.has(x.id) && !REACTION.test(x.title) && (exact || !GAME.test(x.title)))
       .sort((a, b) => (OFFICIAL_CHANNELS.test(b.channel) ? 1 : 0) - (OFFICIAL_CHANNELS.test(a.channel) ? 1 : 0));
     for (const cand of cands.slice(0, 2)) {
       seen.add(cand.id);
@@ -118,7 +121,7 @@ export async function newsImages(urls = [], dir) {
 }
 
 /** Planos del vídeo (cambios de escena) enteros, sin el principio (logos), el final (créditos) ni negros. */
-async function scenesOf(file, dur) {
+export async function scenesOf(file, dur) {
   const out = await new Promise((resolve) => execFile('ffmpeg', ['-nostdin', '-i', file, '-an', '-vf', "scale=320:-2,blackdetect=d=0.1:pix_th=0.1,select='gt(scene,0.22)',showinfo", '-f', 'null', '-'],
     { maxBuffer: 64 << 20, timeout: 300000 }, (_e, _o, err) => resolve(String(err))));
   const cuts = [...out.matchAll(/pts_time:([\d.]+)/g)].map((m) => +m[1]);
@@ -133,7 +136,7 @@ async function scenesOf(file, dur) {
  * reconoce), el plano, la acción, la emoción, el punto focal (focusX, focusY) para el recorte vertical 9:16 y si
  * necesita encuadre completo (layout: 'card'); quita las que no sirven y marca las mejores para miniatura.
  */
-async function catalogScenes(file, scenes, dir, log, context, real = false) {
+export async function catalogScenes(file, scenes, dir, log, context, real = false) {
   const all = scenes.slice(0, 64);
   if (!all.length) { log('👀 Escenas del tráiler: ninguna útil'); return []; }
   const bad = new Set();
@@ -178,7 +181,7 @@ En "bad" las que NO sirven: texto grande o en el centro (títulos, créditos, fe
         },
         required: ['scenes', 'thumb', 'bad'],
       },
-      system: 'Eres editor de vídeo y experto en anime. Miras imágenes con la herramienta Read.', model: 'sonnet', effort: 'low', tools: ['Read'], cwd: dir,
+      system: 'Eres editor de vídeo y experto en anime. Miras imágenes con la herramienta Read.', effort: 'low', tools: ['Read'], cwd: dir,
     }, () => {}, () => {}).catch(() => ({ data: {} }));
     for (const n of ev.data.bad ?? []) bad.add(b + Number(n) - 1);
     // «ninguno», «nadie», «-»… = no sale nadie
@@ -258,7 +261,7 @@ Para CADA imagen (1-${batch.length}) devuelve en "photos":
         },
         required: ['photos'],
       },
-      system: 'Eres director de fotografía y editor de shorts verticales. Miras imágenes con la herramienta Read.', model: 'sonnet', effort: 'low', tools: ['Read'], cwd: dir,
+      system: 'Eres director de fotografía y editor de shorts verticales. Miras imágenes con la herramienta Read.', effort: 'low', tools: ['Read'], cwd: dir,
     }, () => {}, () => {}).catch(() => ({ data: {} }));
     for (const [i, x] of batch.entries()) {
       const d = (ev.data.photos ?? []).find((p) => Number(p.n) === i + 1);
@@ -394,14 +397,21 @@ export async function renderCut(c, item, uses, out) {
  * script: { lines: [{ text, show, query, visual }], scene_query, yellow, red }, voice: mp3, words: [{ w, s, e }] (alineadas);
  * context: de qué va (historia y personajes). Devuelve { video, thumb }.
  */
-export async function montage({ script, voice, words, duration, dir, name = 'short', thumb = null, context = '', sources: news = [] }, log, signal) {
+export async function montage({ script, voice, words, duration, dir, name = 'short', thumb = null, context = '', sources: news = [], episode = null }, log, signal) {
   await mkdir(dir, { recursive: true });
   const total = duration + 0.3;
   const lines = lineTimes(script.lines, words, total);
   // catálogo: escenas de los tráileres de cada anime del guion, escena clave (scene_query) y fotos verificadas con encuadre
   const catalog = [];
   const rawImages = [];
-  const animes = [...new Set(script.lines.filter((l) => l.show === 'anime').map((l) => l.query))];
+  // historia atemporal sobre un momento concreto: las escenas del propio episodio en vez del tráiler genérico
+  const ep = episode?.episode > 0 ? await episodeScenes(episode, dir, log, context, '90-160')
+    .catch((e) => { log(`⚠️ Sin episodio (${e.message.slice(0, 120)}): uso tráileres`); return null; }) : null;
+  ep?.scenes.forEach((x) => catalog.push({ ...x, kind: 'video', anime: episode.anime, id: `V${catalog.length + 1}` }));
+  const enough = (ep?.scenes.length ?? 0) >= 12;
+  const animes = enough ? [] : [...new Set(script.lines.filter((l) => l.show === 'anime').map((l) => l.query))];
+  // un guion solo con «video»/«imagen» se quedaba sin material si esas búsquedas fallaban: el tráiler de la franquicia es la base
+  if (!enough && !animes.length && script.franchise?.trim()) animes.push(script.franchise.trim());
   const sources = new Map();
   for (const q of animes) {
     const t = await trailer(q, dir, log, context).catch((e) => { log(`⚠️ ${e.message}: uso imágenes`); return null; });
@@ -417,7 +427,7 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
     }
   }
   // Si el guion gira en torno a una escena, pelea o final concreto del anime (scene_query), buscamos también ese clip exacto
-  if (script.scene_query?.trim() && !animes.some((a) => norm(a) === norm(script.scene_query))) {
+  if (!enough && script.scene_query?.trim() && !animes.some((a) => norm(a) === norm(script.scene_query))) {
     const sq = script.scene_query.trim();
     const st = await trailer(sq, dir, log, context, true).catch((e) => { log(`ℹ️ Escena específica «${sq}»: ${e.message.slice(0, 90)}`); return null; });
     if (st) st.scenes.forEach((x) => catalog.push({ ...x, kind: 'video', anime: animes[0] ?? sq, id: `V${catalog.length + 1}`, desc: `escena clave (${sq}): ${x.desc ?? ''}` }));
@@ -529,5 +539,7 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
     '-filter_complex', `[0:v]subtitles=${ass}:fontsdir=${FONTS}[v];[2:v]scale=${W}:${H}[t];[v][t]overlay=enable='lt(t,0.066)'[o]${sfx ? ';[3:a]volume=0.45[s];[1:a][s]amix=inputs=2:normalize=0:duration=first[a]' : ''}`,
     '-map', '[o]', '-map', sfx ? '[a]' : '1:a',
     '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-t', String(total), '-movflags', '+faststart', final]);
-  return { video: final, thumb };
+  const qa = await finalReview(final, total).catch(() => null);
+  if (qa) log(fmtQa(qa));
+  return { video: final, thumb, qa };
 }

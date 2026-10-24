@@ -164,9 +164,17 @@ const chaptersBox = (p) => {
   const lines = p.chaptersTimeline.map((c) => {
     const s = Math.max(0, Math.floor(c.start || 0));
     const ts = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-    return `${ts} · ${c.number > 0 ? `${c.number}. ${c.heading} (${c.anime})` : c.heading}`;
+    return `${ts} · ${c.number > 0 ? `#${c.number} ${c.heading} (${c.anime})` : c.heading}`;
   }).join('\n');
   return `<details class="hint" open><summary>📌 Capítulos (${p.chaptersTimeline.filter((c) => c.number > 0).length})</summary><div class="chapters-list">${esc(lines)}</div></details>`;
+};
+
+const qaText = (qa) => {
+  const mm = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  const bad = [qa.repeats?.length && `${qa.repeats.length} repetido${qa.repeats.length > 1 ? 's' : ''} (${qa.repeats.slice(0, 4).map(([a, b]) => `${mm(a)}→${mm(b)}`).join(', ')})`,
+    qa.blacks?.length && `${qa.blacks.length} negro${qa.blacks.length > 1 ? 's' : ''} (${qa.blacks.slice(0, 4).map(([a]) => mm(a)).join(', ')})`,
+    qa.silences?.length && `${qa.silences.length} silencio${qa.silences.length > 1 ? 's' : ''} (${qa.silences.slice(0, 4).map(([a]) => mm(a)).join(', ')})`].filter(Boolean);
+  return bad.length ? `🔎 Revisar: ${bad.join(' · ')}` : '🔎 Revisión: sin repeticiones, negros ni silencios';
 };
 
 function renderCard(p) {
@@ -176,6 +184,8 @@ function renderCard(p) {
       <video src="${esc(mediaURL(p.video, p))}" ${p.thumbSmall ? `poster="${esc(mediaURL(p.thumbSmall, p))}"` : ''} controls preload="metadata" playsinline></video>
       <div class="body">
         <div class="title">${esc(p.script?.title)}</div>
+        ${p.qa ? `<div class="hint" title="Revisión automática del vídeo terminado">${esc(qaText(p.qa))}</div>` : ''}
+        ${p.failed ? '<div class="hint">⚠️ El montaje falló: pulsa «🎬 Re-montar» (usa la misma voz, no vuelve a pagar ElevenLabs)</div>' : ''}
         <div class="hint">${esc(p.story?.anime)} · ${esc(p.story?.angle)}${p.voice?.title ? ` · 🎙 ${esc(p.voice.title)}` : ''}</div>
         <div class="row wrap">
           <a class="btn primary" href="${esc(mediaURL(p.video, p))}" download="${esc(slug(p.script?.title ?? p.id))}-${isLong ? 'youtube-16x9' : 'youtube'}.mp4" title="${isLong ? 'Vídeo largo 16:9 para YouTube' : 'Para YouTube Shorts'}">⬇ YouTube${p.duration ? ` · ${fmtDur(p.duration)}` : ''}</a>
@@ -187,6 +197,7 @@ function renderCard(p) {
           <button data-act="remake" title="Guion, voz y montaje nuevos (con la voz elegida arriba)">🔄 Rehacer</button>
           <button data-act="del" class="danger" title="Borrar">🗑</button>
         </div>
+        ${isLong ? '' : scheduleBox(p)}
         ${isLong ? chaptersBox(p) : ''}
         ${commentBox(p)}
         ${p.viral?.level ? `<div class="viral ${p.viral.level}" title="Comparado con la mediana de tus shorts a la misma edad · ${p.viral.perHour ?? 0} vistas/h ahora">${esc(p.viral.label)}</div>` : ''}
@@ -197,8 +208,27 @@ function renderCard(p) {
     </div>`;
 }
 
+// Horas para publicar (hora de Colombia), separadas ≥1 h en cada red. Facebook, medido (39 reels, oct-2026): 14-16 h y
+// 18-20 h dan 6-10 veces más que la mañana. YouTube no da la hora en su export: horas de más actividad del público latino
+// (picos 18-19 h) y las que ya funcionaron. ponytail: franjas fijas; recalcular con más datos.
+const SLOTS = { youtube: ['12:00', '18:00', '20:00'], facebook: ['14:30', '18:00', '19:30'] };
+let schedule = new Map();
+/** Cada short sin publicar en una red recibe la siguiente franja libre, del más antiguo al más nuevo (3 por día). */
+function planSchedule(shorts) {
+  schedule = new Map();
+  for (const net of Object.keys(SLOTS)) {
+    shorts.filter((p) => !p.stats?.[net] && Date.now() - (p.created ?? 0) < 3 * 864e5).sort((a, b) => (a.created ?? 0) - (b.created ?? 0)).forEach((p, i) => {
+      const day = Math.floor(i / SLOTS[net].length);
+      const when = `${day === 0 ? 'hoy' : day === 1 ? 'mañana' : `en ${day} días`} ${SLOTS[net][i % SLOTS[net].length]}`;
+      schedule.set(p.id, { ...schedule.get(p.id), [net]: when });
+    });
+  }
+}
+const scheduleBox = (p) => { const s = schedule.get(p.id); return s ? `<div class="hint schedule" title="Horas recomendadas (Colombia), una franja distinta para cada short pendiente">🕐 Publicar: ${s.youtube ? `YouTube ${s.youtube}` : ''}${s.youtube && s.facebook ? ' · ' : ''}${s.facebook ? `Facebook ${s.facebook}` : ''}</div>` : ''; };
+
 function render() {
   const shortsList = list.filter((p) => p.kind !== 'long');
+  planSchedule(shortsList);
   const longsList = list.filter((p) => p.kind === 'long');
   $('#shorts').innerHTML = shortsList.length ? shortsList.map(renderCard).join('') : '<div class="empty">Aún no hay shorts. Pulsa «Crear shorts de hoy».</div>';
   if ($('#longs')) $('#longs').innerHTML = longsList.length ? longsList.map(renderCard).join('') : '<div class="empty">Aún no hay vídeos largos 16:9. Pulsa «Crear vídeo largo (8-10 min)».</div>';
@@ -268,7 +298,7 @@ if ($('#make-long')) {
     const topic = $('#long-topic')?.value.trim() || '';
     const voice = $('#long-voice-pick')?.value || $('#voice-pick').value;
     runTask('Creando vídeo largo 16:9 (8-10 min)', async (ui) => {
-      ui.step('Plan de 6 capítulos → guion y voz por bloque → montaje 16:9 → miniatura y capítulos');
+      ui.step('Top 10 con episodio exacto → guion y voz por puesto → escenas del episodio (nyaa) → montaje 16:9 → miniatura y capítulos');
       const ev = await streamTo(ui, '/api/long', { topic, voice });
       return `Vídeo largo listo (${fmtDur(ev.data.duration)})`;
     });
@@ -285,7 +315,12 @@ $('#stats').onclick = () => runTask('Leyendo las cifras de YouTube, TikTok y Fac
 $('#logout').onclick = async () => { await postJSON('/api/logout', {}).catch(() => {}); location.replace('/login'); };
 
 // ================= arranque =================
-const [me, shorts, ai] = await Promise.all([getJSON('/api/me'), getJSON('/api/projects').catch(() => []), getJSON('/api/ai-status').catch(() => null)]);
+const [me, shorts, ai, config] = await Promise.all([getJSON('/api/me'), getJSON('/api/projects').catch(() => []), getJSON('/api/ai-status').catch(() => null), getJSON('/api/config').catch(() => null)]);
+if (config) $('#tiktok-on').checked = config.tiktok;
+$('#tiktok-on').onchange = async (e) => {
+  try { await postJSON('/api/config', { tiktok: e.target.checked }); toast(e.target.checked ? 'Se hará también la versión TikTok' : 'Solo versión YouTube (súbela también a TikTok)', 'ok'); }
+  catch { e.target.checked = !e.target.checked; toast('No se pudo guardar la configuración', 'bad'); }
+};
 $('#ai-engine').textContent = ai ? `IA: ${ai.engine === 'codex' ? 'Codex' : ai.engine === 'claude' ? 'Claude' : 'Automático'}` : '';
 $('#me').textContent = `👤 ${me.username}`;
 list = sortByCreated(shorts);

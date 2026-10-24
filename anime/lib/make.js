@@ -25,8 +25,15 @@ async function produce({ id, story, script, voiceId, name, thumb }, { tts, align
   // sin las pausas largas tras cada punto: ritmo de ~2,9 palabras/s, como los canales grandes
   const { file: voice, words, duration } = await tightenVoice(file, raw, al.duration ?? raw.at(-1).e);
   log(`🎬 Montando la versión ${name === 'short' ? 'YouTube' : 'TikTok'} (${Math.round(duration)} s)…`);
-  const out = await montage({ script, voice, words, duration, dir: path.join(mediaDir, id), name, thumb, context, sources: story.sources }, log, signal);
-  return { duration, voice: { voiceId, url: seg.url }, video: `/media/${id}/${name}.mp4`, thumb: out.thumb };
+  const job = { script, voice, words, duration, dir: path.join(mediaDir, id), name, thumb, context, sources: story.sources, episode: story.episode > 0 ? story : null };
+  // la voz ya está pagada: un fallo pasajero (red, cuota de la IA) se reintenta una vez; si vuelve a fallar, el error lleva
+  // la voz para guardar el short y re-montarlo sin pagar ElevenLabs otra vez
+  const out = await montage(job, log, signal).catch((e) => {
+    if (signal?.aborted) throw e;
+    log(`⚠️ El montaje falló (${e.message.slice(0, 120)}): lo intento otra vez con la misma voz…`);
+    return montage(job, log, signal);
+  }).catch((e) => { e.voice = { voiceId, url: seg.url }; throw e; });
+  return { duration, voice: { voiceId, url: seg.url }, video: `/media/${id}/${name}.mp4`, thumb: out.thumb, qa: out.qa };
 }
 
 /** Versión TikTok (61-66 s, > 1 min para poder monetizar); reutiliza los tráileres y la miniatura de la de YouTube. */
@@ -51,7 +58,7 @@ export async function makeTiktok({ id, story, voiceId, thumb, learn = '' }, deps
  * deps: { tts, aligner, mediaDir } (tts y aligner = lib/tts y lib/align ya cargados con PROJECTS_DIR).
  * Devuelve el proyecto { id, story, script, voice, video, tiktok, thumb, cost }.
  */
-export async function makeShort({ id, story, voiceId, learn = '' }, deps, emit, track, signal) {
+export async function makeShort({ id, story, voiceId, learn = '', tiktok: withTiktok = true }, deps, emit, track, signal) {
   const log = (text) => emit({ type: 'log', text });
   let cost = 0;
   log(`✍️ Guion: ${story.anime} — ${story.angle}`);
@@ -60,12 +67,16 @@ export async function makeShort({ id, story, voiceId, learn = '' }, deps, emit, 
   log(`📝 «${script.title}» · ${script.lines.length} frases`);
   script.copy = await writeCopy({ about: copyAbout(story, script), brand: '@notianimes', keywordsHint: 'el nombre del anime y el personaje, técnica o dato concreto que alguien buscaría: temporada, película, fecha, tráiler, personaje famoso, estudio; escrito como un titular claro y buscable, sin juegos de palabras ni nombres propios de personajes secundarios oscuros que nadie busca (si el secundario no es famoso, descríbelo por su papel junto al protagonista: «Dragon Ball: el villano que Goku mandó a la Luna» en vez de «Toninjinka»; medido: los títulos con personaje o término muy buscado como «Naruto Shippuden: cómo los clones aceleraban el entrenamiento de Naruto» o «Gachiakuta: el episodio que revela el pasado de Amo» multiplican por 4-6× las vistas y las impresiones desde búsquedas)', includeComment: true }, emit, track);
 
-  const yt = await produce({ id, story, script, voiceId, name: 'short' }, deps, log, signal);
+  const yt = await produce({ id, story, script, voiceId, name: 'short' }, deps, log, signal).catch((e) => {
+    if (e.voice) e.partial = { id, story, script, voice: e.voice, duration: 0, video: `/media/${id}/short.mp4`, tiktok: null, thumb: `/media/${id}/thumb-4k.jpg`, thumbSmall: `/media/${id}/thumb.jpg`, cost, failed: true, created: Date.now() };
+    throw e;
+  });
   // versión TikTok (si falla, el short de YouTube se guarda igual)
   let tiktok = null;
-  try { const t = await makeTiktok({ id, story, voiceId, thumb: yt.thumb, learn }, deps, emit, track, signal); tiktok = t.tiktok; cost += t.cost; }
+  if (!withTiktok) log('ℹ️ Versión TikTok desactivada en la configuración');
+  else try { const t = await makeTiktok({ id, story, voiceId, thumb: yt.thumb, learn }, deps, emit, track, signal); tiktok = t.tiktok; cost += t.cost; }
   catch (e) { log(`⚠️ Versión TikTok: ${e.message.slice(0, 160)}`); }
-  return { id, story, script, voice: yt.voice, duration: Math.round(yt.duration), video: yt.video, tiktok, thumb: `/media/${id}/thumb-4k.jpg`, thumbSmall: `/media/${id}/thumb.jpg`, cost, created: Date.now() };
+  return { id, story, script, voice: yt.voice, duration: Math.round(yt.duration), video: yt.video, tiktok, thumb: `/media/${id}/thumb-4k.jpg`, thumbSmall: `/media/${id}/thumb.jpg`, qa: yt.qa, cost, created: Date.now() };
 }
 
 /**
@@ -88,11 +99,13 @@ export async function remountProject(pj, { tts, aligner, mediaDir }, log = () =>
     if (!raw.length) throw new Error(`Sin palabras alineadas para ${pj.id} (${name})`);
     const { file: voice, words, duration } = await tightenVoice(file, raw, al.duration ?? raw.at(-1).e);
     log(`🎬 Re-montando ${pj.id} (${name}, ${Math.round(duration)} s) con encuadre inteligente y Cinema Card…`);
-    await montage({ script, voice, words, duration, dir, name, thumb, context, sources: pj.story.sources }, log, signal);
+    const out = await montage({ script, voice, words, duration, dir, name, thumb, context, sources: pj.story.sources, episode: pj.story.episode > 0 ? pj.story : null }, log, signal);
+    if (name === 'short') pj.qa = out.qa;
     return Math.round(duration);
   };
 
   pj.duration = await remountOne(pj.script, pj.voice.url, 'short');
+  delete pj.failed;
   if (pj.tiktok?.script && pj.tiktok?.voice?.url) {
     pj.tiktok.duration = await remountOne(pj.tiktok.script, pj.tiktok.voice.url, 'tiktok');
   }

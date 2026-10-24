@@ -53,9 +53,10 @@ GUION: ${script.lines?.map((l) => l.text).join(' ') || script.title}
 TEXTO QUE PONDREMOS DESPUÉS: ${script.thumb_text || script.title}
 IDEA VISUAL: ${direction}
 - Representa el dato o acción de ESTA historia con un personaje reconocible y el objeto o situación relevantes. No inventes hechos ni uses un personaje ajeno solo porque sale en el tráiler.
-- Conserva el personaje (cara, pelo, ropa, estilo de animación), pero cambia claramente pose, ángulo y composición. Expresión legible y todos los personajes situados en los dos tercios inferiores (por debajo del 28 % superior).
+- Conserva el personaje (cara, pelo, ropa, estilo de animación), pero cambia claramente pose, ángulo y composición.
+- PLANO MEDIO OBLIGATORIO: Dibuja al personaje en plano medio (de cintura o pecho hacia arriba), con su cabeza situada en los dos tercios inferiores (a partir del 35 % de altura hacia abajo). NUNCA figuras de cuerpo entero de pie que lleguen hasta el borde superior.
 - Colores muy vivos y saturados (naranjas, amarillos, turquesas), contraste alto, contorno limpio y nítido, un brillo o halo que lo separe del fondo; fondo simplificado y algo desenfocado.
-- ZONA DE TÍTULO OBLIGATORIA: el 28 % SUPERIOR de la imagen debe quedar completamente despejado (cielo, techo o fondo oscuro/liso sin cabezas, caras, manos ni objetos protagonistas), porque ahí irá el título grande.
+- ZONA DE TÍTULO OBLIGATORIA: el 35 % SUPERIOR de la imagen (más de un tercio vertical) debe quedar completamente despejado (cielo, techo o fondo oscuro/liso sin cabezas, caras, pelo, manos ni objetos protagonistas), porque ahí se colocará el titular grande sin tapar al personaje.
 - Sin NINGÚN texto, letra, número, logo ni marca de agua.
 COMPOSICIONES YA USADAS QUE DEBES EVITAR: ${history.map((h) => h.direction).filter(Boolean).slice(-30).join(' · ') || 'retratos genéricos de una cara gritando de frente; diseña una escena específica de esta historia'}.
 Cuando la imagen esté generada, responde solo: listo.`;
@@ -86,9 +87,9 @@ async function createThumb({ script, anime, scenes, dir, context = '' }, log, si
   let direction = `Escena nueva que ilustre ${context || script.title}; ${script.thumb_text || ''}. Cambia el encuadre y muestra la acción u objeto concreto.`;
   const choices = ranked.slice(0, 24);
   const ev = await claudeStep({
-    prompt: `Elige una referencia de personaje para la portada de ESTA historia: ${context || script.title}.\nGuion: ${script.lines?.map((l) => l.text).join(' ')}\nTexto: ${script.thumb_text}.\nReferencias disponibles (ya excluimos tomas usadas): ${JSON.stringify(choices.map((s, i) => ({ n: i, who: s.who, desc: s.desc, shot: s.shot })))}\nComposiciones anteriores que no debes repetir: ${JSON.stringify(history.map((h) => h.direction).filter(Boolean))}.\nDevuelve index (índice de referencia pertinente) y direction (una composición nueva, concreta, con personajes/objeto/acción de la historia, sin texto, respetando lo narrado). No elijas automáticamente el primer plano más bonito.`,
+    prompt: `Elige una referencia de personaje para la portada de ESTA historia: ${context || script.title}.\nGuion: ${script.lines?.map((l) => l.text).join(' ')}\nTexto: ${script.thumb_text}.\nReferencias disponibles (ya excluimos tomas usadas): ${JSON.stringify(choices.map((s, i) => ({ n: i, who: s.who, desc: s.desc, shot: s.shot })))}\nComposiciones anteriores que no debes repetir: ${JSON.stringify(history.map((h) => h.direction).filter(Boolean))}.\nDevuelve index (índice de referencia pertinente) y direction (una composición nueva, concreta, con personajes/objeto/acción de la historia, sin texto, respetando lo narrado). NUNCA propongas figuras de cuerpo entero que lleguen al borde superior; propone plano medio de cintura hacia arriba situado del 35 % hacia abajo para que el tercio superior quede completamente libre para el titular.`,
     schema: { type: 'object', properties: { index: { type: 'integer', minimum: 0, maximum: choices.length - 1 }, direction: { type: 'string' } }, required: ['index', 'direction'] },
-    system: 'Eres director de arte de portadas de anime; cada portada cuenta una historia distinta.', model: 'sonnet', effort: 'low', tools: [],
+    system: 'Eres director de arte de portadas de anime; cada portada cuenta una historia distinta.', effort: 'low', tools: [],
   }, () => {}, () => {}).catch((e) => { log(`⚠️ Dirección de portada: ${e.message.slice(0, 100)}`); return null; });
   if (ev && choices[ev.data?.index]) { best = choices[ev.data.index]; direction = ev.data.direction || direction; }
   signal?.throwIfAborted();
@@ -102,7 +103,7 @@ async function createThumb({ script, anime, scenes, dir, context = '' }, log, si
     try {
       const gen = await generateImage({ prompt: prompt(anime, script, context, direction, history), ref: frame }, signal);
       const hash = await fingerprint(gen);
-      if (!hash || history.some((h) => h.artHash && hashDistance(hash, h.artHash) <= 6)) throw new Error('El dibujo se parece demasiado a una portada anterior');
+      if (!hash || history.some((h) => h.artHash && hashDistance(hash, h.artHash) <= 4)) throw new Error('El dibujo se parece demasiado a una portada anterior');
       art = path.join(work, `thumb-art${path.extname(gen) || '.png'}`);
       await copyFile(gen, art);
     } catch (e) { signal?.throwIfAborted(); log(`⚠️ Codex no pudo (${e.message.slice(0, 120)}): uso la toma nueva del tráiler`); }
@@ -159,7 +160,7 @@ async function createThumb16x9({ script, anime, scenes, dir, context = '' }, log
   const ev = await claudeStep({
     prompt: `Elige una referencia de personaje para la miniatura horizontal 16:9 de YouTube de ESTE vídeo largo: ${context || script.title}.\nTexto en portada: ${script.thumb_text}.\nReferencias disponibles: ${JSON.stringify(choices.map((s, i) => ({ n: i, who: s.who, desc: s.desc, shot: s.shot })))}\nDevuelve index (índice de referencia) y direction (composición horizontal 16:9 concreta con el personaje/acción en los dos tercios derechos y el tercio izquierdo oscuro y despejado, sin texto).`,
     schema: { type: 'object', properties: { index: { type: 'integer', minimum: 0, maximum: choices.length - 1 }, direction: { type: 'string' } }, required: ['index', 'direction'] },
-    system: 'Eres director de arte de miniaturas horizontales de YouTube de anime.', model: 'sonnet', effort: 'low', tools: [],
+    system: 'Eres director de arte de miniaturas horizontales de YouTube de anime.', effort: 'low', tools: [],
   }, () => {}, () => {}).catch(() => null);
   if (ev && choices[ev.data?.index]) { best = choices[ev.data.index]; direction = ev.data.direction || direction; }
   signal?.throwIfAborted();
