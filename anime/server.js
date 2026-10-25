@@ -5,7 +5,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { mkdir, stat } from 'node:fs/promises';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { sendJSON, readBody, sse, setEngine, getEngine } from '../lib/claude.js';
 import { migrate, listProjects, getProject, saveProject, deleteProject, q, getSetting, setSetting } from '../lib/db.js';
@@ -21,6 +21,7 @@ import { refreshStats } from '../lib/stats.js';
 import { virality, learnings } from '../lib/virality.js';
 import { youtubeAnalyticsMissingConfig } from '../lib/youtube-analytics.js';
 import { youtubeLearning } from './lib/youtube-learning.js';
+import { waitReady } from './lib/episodes.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // antes de cargar la voz: sus carpetas cuelgan de PROJECTS_DIR
@@ -68,6 +69,20 @@ setInterval(() => updateStats().catch((e) => console.error('cifras:', e.message)
 const REMOUNT_QUEUE = path.join(PROJECTS, 'remount-queue.json');
 const REMOUNT_LOG = path.join(PROJECTS, 'remount-status.log');
 let remountBusy = false;
+const enqueue = async (item) => {
+  const q = existsSync(REMOUNT_QUEUE) ? JSON.parse(await readFile(REMOUNT_QUEUE, 'utf8')) : [];
+  if (!q.includes(item)) await writeFile(REMOUNT_QUEUE, JSON.stringify([...q, item]));
+};
+// un largo que falló se reanuda solo desde su borrador; red o disco caídos se reintentan hasta 5 veces
+const TRANSIENT = /fetch failed|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|network|socket|timed? ?out|No space left|ENOSPC|descarga a medias/i;
+const longTries = new Map();
+const resumeLater = async (id, e, started) => {
+  // borrador de este intento (al rehacer, el del vídeo anterior no cuenta)
+  const draft = path.join(MEDIA, id, 'long-draft.json');
+  if (/Cancelado/.test(e.message) || !existsSync(draft) || statSync(draft).mtimeMs < started) return e;
+  await enqueue(`long:${id}`);
+  return new Error(`${e.message} · El avance quedó guardado: se reanuda solo en segundo plano (registro en remount-status.log)`);
+};
 setInterval(async () => {
   if (remountBusy || !existsSync(REMOUNT_QUEUE)) return;
   remountBusy = true;
@@ -84,6 +99,7 @@ setInterval(async () => {
         // «long:<id>» reanuda un vídeo largo que falló en el montaje, desde su borrador (guion y voces ya hechos)
         if (String(id).startsWith('long:')) {
           const lid = safeId(String(id).slice(5));
+          await waitReady(MEDIA, logLine);
           await logLine(`━━ Reanudando vídeo largo ${lid} desde su borrador…`);
           const prev = await getProject(lid, TABLE);
           const pj = await resumeLong(lid, { tts, aligner, mediaDir: MEDIA }, (ev) => { if (ev.type === 'log') logLine(ev.text); }, () => {});
@@ -92,6 +108,7 @@ setInterval(async () => {
           if (prev?.created) pj.created = prev.created;
           await saveProject(pj, null, TABLE);
           await logLine(`✅ ${lid} completado (${pj.duration}s)`);
+          longTries.delete(lid);
           continue;
         }
         const pj = await getProject(safeId(id), TABLE);
@@ -103,6 +120,15 @@ setInterval(async () => {
         await logLine(`✅ ${id} (${pj.story?.anime}) completado (YouTube: ${pj.duration}s${pj.tiktok ? `, TikTok: ${pj.tiktok.duration}s` : ''})`);
       } catch (e) {
         await logLine(`❌ Error en ${id}: ${e.message}`);
+        const lid = String(id).startsWith('long:') && safeId(String(id).slice(5));
+        const n = (longTries.get(lid) ?? 0) + 1;
+        // sin cuota de IA (Codex y Claude): espera media hora antes de reintentar
+        const quota = /usage limit|session limit|hit your limit/i.test(e.message);
+        if (lid && (TRANSIENT.test(e.message) || quota) && n < 5) {
+          longTries.set(lid, n);
+          if (quota) { await logLine(`⏸ ${lid}: sin cuota de IA, reintento en 30 min`); await new Promise((r) => setTimeout(r, 30 * 60000)); }
+          await enqueue(id); await logLine(`🔁 ${lid}: lo reintento (${n + 1}/5)`);
+        }
       }
     }
     await logLine('🎉 Todos los shorts de la cola han sido re-montados.');
@@ -113,7 +139,9 @@ setInterval(async () => {
   }
 }, 5000);
 
-/** Tarea larga por SSE: result / error / end, cancelable al cerrar la conexión. */
+// solo el botón «Cancelar» corta una tarea: recargar la página (F5) o perder la conexión ya no tira el short a medias
+let cancelAt = 0;
+/** Tarea larga por SSE: result / error / end; sigue aunque se cierre la conexión, salvo con «Cancelar». */
 const task = (res, run) => sse(res, (emit) => {
   const ctrl = new AbortController();
   let cancel = () => {};
@@ -122,7 +150,7 @@ const task = (res, run) => sse(res, (emit) => {
     .then((data) => emit({ type: 'result', data, cost: data?.cost, secs: Math.round((Date.now() - started) / 1000) }))
     .catch((e) => emit({ type: 'error', message: e.message }))
     .finally(() => emit({ type: 'end' }));
-  return () => { ctrl.abort(); cancel(); };
+  return () => setTimeout(() => { if (Date.now() - cancelAt < 5000) { ctrl.abort(); cancel(); } }, 1500);
 });
 
 /** Hace un short y lo guarda; si falla, lo cuenta y sigue (en automático no se para todo por uno). */
@@ -160,6 +188,8 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       if (req.method === 'POST') { const { tiktok } = await readBody(req); await setSetting(`${TABLE}.tiktok`, tiktok !== false); }
       return sendJSON(res, 200, { tiktok: (await getSetting(`${TABLE}.tiktok`)) !== false });
     }
+
+    if (p === '/api/cancel' && req.method === 'POST') { cancelAt = Date.now(); return sendJSON(res, 200, { ok: true }); }
 
     if (p === '/api/ai-status' && req.method === 'GET') {
       return sendJSON(res, 200, { engine: getEngine(), model: getEngine() === 'codex' ? (process.env.CODEX_MODEL || null) : null });
@@ -230,7 +260,10 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
           allProjects.slice(0, 8).map((x) => franchiseOf(x.story?.anime)).filter(Boolean)
         )];
         const learn = await learnFrom();
-        const pj = await makeLong({ id: `${Date.now().toString(36)}L`, topic, voiceId: v.id, learn, avoid, recentFranchises }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
+        const started = Date.now();
+        const id = `${started.toString(36)}L`;
+        const pj = await makeLong({ id, topic, voiceId: v.id, learn, avoid, recentFranchises }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal)
+          .catch(async (e) => { throw await resumeLater(id, e, started); });
         pj.voice.title = v.title;
         await saveProject(pj, user.id, TABLE);
         emit({ type: 'short', project: pj });
@@ -246,7 +279,9 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
         return task(res, async (emit, track, signal) => {
           const v = voiceOf(voice);
           emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
-          const pj = await makeLong({ id: old.id, topic: `${old.story?.anime}: ${old.story?.angle}`, voiceId: v.id, learn: await learnFrom() }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal);
+          const started = Date.now();
+          const pj = await makeLong({ id: old.id, topic: `${old.story?.anime}: ${old.story?.angle}`, voiceId: v.id, learn: await learnFrom() }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal)
+            .catch(async (e) => { throw await resumeLater(old.id, e, started); });
           pj.voice.title = v.title;
           if (old.stats) pj.stats = old.stats;
           if (old.created) pj.created = old.created;

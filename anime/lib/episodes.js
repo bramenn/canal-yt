@@ -2,7 +2,7 @@
 // compartiendo), lee sus subtítulos para encontrar el minuto en que pasa lo que cuenta el narrador, recorta esos tramos
 // en 1080p y borra el episodio. Devuelve escenas catalogadas como las de un tráiler + una ráfaga de audio original.
 import path from 'node:path';
-import { mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, rm, stat, statfs } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { run } from '../../lib/ytdlp.js';
 import { claudeStep } from '../../lib/claude.js';
@@ -17,6 +17,21 @@ const TRUSTED = /SubsPlease|Erai-raws|EMBER|Judas|ASW|Yameii|ToonsHub|DKB|neoDES
 const TRACKERS = ['http://tracker.opentrackr.org:1337/announce', 'udp://tracker.opentrackr.org:1337/announce', 'udp://open.stealth.si:80/announce',
   'udp://exodus.desync.com:6969/announce', 'udp://tracker.torrent.eu.org:451/announce', 'http://open.tracker.cl:1337/announce'].join(',');
 const epRe = (ep) => new RegExp(`(?:\\s-\\s|\\bE|\\bEp\\.?\\s?|#|\\s)0*${ep}(?:v\\d)?(?=[\\s\\]\\[(._-]|$)`, 'i');
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Pausa (sin fallar) mientras no haya red o queden menos de minGB libres: el trabajo sigue solo cuando se arregla. */
+export async function waitReady(dir, log = () => {}, { minGB = 5, signal } = {}) {
+  for (let warned = false; ; warned = true) {
+    if (signal?.aborted) throw new Error('Cancelado');
+    const fs = await statfs(dir).catch(() => null);
+    const free = fs ? (fs.bavail * fs.bsize) / 1e9 : Infinity;
+    const net = await fetch('https://www.google.com/generate_204', { signal: AbortSignal.timeout(10000) }).then(() => true, () => false);
+    if (net && free >= minGB) return;
+    if (!warned) log(`⏸ ${net ? `Solo quedan ${free.toFixed(1)} GB libres (hacen falta ${minGB}): libera espacio y sigo solo` : 'Sin red: espero a que vuelva y sigo solo'}…`);
+    await sleep(60000);
+  }
+}
 
 async function rss(q) {
   const url = `https://nyaa.si/?page=rss&c=1_2&s=seeders&o=desc&q=${encodeURIComponent(q)}`;
@@ -34,7 +49,7 @@ export async function findTorrent(name, ep) {
   const one = epRe(ep);
   const score = (x) => x.seeders * (/1080p/i.test(x.title) ? 3 : /720p/i.test(x.title) ? 1.5 : 1) * (TRUSTED.test(x.title) ? 2 : 1);
   for (const q of [`${name} ${pad(ep)} 1080p`, `${name} ${pad(ep)}`, `${name} batch`, `${name} complete`]) {
-    const items = await rss(q).catch(() => []);
+    const items = await rss(q).catch(async () => { await waitReady('/'); return rss(q).catch(() => []); });
     // «[Grupo] Nombre - 24 (1080p)»: el nombre seguido del número, para no confundir Naruto con Boruto - Naruto… ni una temporada con otra
     const bare = (x) => norm(x.title.replace(/^(\[[^\]]*\]\s*)+/, ''));
     const fit = items.filter((x) => bare(x).startsWith(norm(name)));
@@ -63,8 +78,8 @@ async function videosIn(dir) {
 async function download(t, ep, dl, log) {
   await mkdir(dl, { recursive: true });
   const tfile = path.join(dl, 'ep.torrent');
-  await writeFile(tfile, Buffer.from(await (await fetch(t.link, { headers: { 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(30000) })).arrayBuffer()));
-  const args = ['--seed-time=0', '--max-overall-upload-limit=100K', '--bt-stop-timeout=300', '--file-allocation=none',
+  if (!existsSync(tfile)) await writeFile(tfile, Buffer.from(await (await fetch(t.link, { headers: { 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(30000) })).arrayBuffer()));
+  const args = ['--continue=true', '--seed-time=0', '--max-overall-upload-limit=100K', '--bt-stop-timeout=300', '--file-allocation=none',
     '--console-log-level=warn', '--summary-interval=0', '--follow-torrent=false', `--dir=${dl}`,
     // el tracker de nyaa no responde desde aquí: trackers públicos + DHT para encontrar peers
     `--bt-tracker=${TRACKERS}`, '--dht-entry-point=router.bittorrent.com:6881', '--enable-dht=true'];
@@ -79,7 +94,14 @@ async function download(t, ep, dl, log) {
     want = hit.name;
   }
   log(`🧲 Bajando de nyaa: ${t.title} (${t.seeders} seeders)`);
-  await run('aria2c', [...args, tfile], 45 * 60000);
+  // si se corta la red o el disco se llena, espera y continúa donde quedó (la carpeta a medias no se borra)
+  for (let i = 1; ; i++) {
+    await waitReady(dl, log);
+    try { await run('aria2c', [...args, tfile], 45 * 60000); break; } catch (e) {
+      if (i >= 3) throw e;
+      log(`🔁 Descarga interrumpida (${String(e.message).slice(0, 80)}): reintento ${i + 1}/3 desde donde quedó…`);
+    }
+  }
   // en un pack, aria2 deja los episodios vecinos a medias con su tamaño completo: se elige por nombre, no por tamaño
   const v = (await videosIn(dl)).find((x) => !want || path.basename(x.file) === want);
   if (!v) throw new Error('el torrent no dejó ningún vídeo');
@@ -149,7 +171,15 @@ ${subs.map((x) => `[${mmss(x.s)}] ${x.text}`).join('\n').slice(0, 60000)}`,
  * entry: { anime, nyaa, episode, moment, facts }. Devuelve { scenes, burst: { file, dur, es } | null } o lanza error
  * (el llamador vuelve a los tráileres).
  */
-export async function episodeScenes(entry, dir, log, context = '', span = '200-320') {
+export function episodeScenes(entry, dir, ...rest) {
+  // la descarga anticipada y el montaje piden el mismo episodio: una sola descarga para los dos
+  const key = `${dir}|${entry.nyaa || entry.anime}|${Math.round(+entry.episode)}`;
+  if (!inflight.has(key)) inflight.set(key, scenesFor(entry, dir, ...rest).finally(() => inflight.delete(key)));
+  return inflight.get(key);
+}
+const inflight = new Map();
+
+async function scenesFor(entry, dir, log, context = '', span = '200-320') {
   const ep = Math.round(+entry.episode);
   if (!(ep > 0)) throw new Error('sin número de episodio');
   const slug = `ep-${norm(entry.nyaa || entry.anime).slice(0, 30)}-${ep}`;
@@ -158,8 +188,9 @@ export async function episodeScenes(entry, dir, log, context = '', span = '200-3
   const t = await findTorrent(entry.nyaa || entry.anime, ep) ?? (entry.nyaa && await findTorrent(entry.anime, ep));
   if (!t) throw new Error(`no está en nyaa (${entry.nyaa || entry.anime} ${ep})`);
   const dl = path.join(dir, `${slug}-dl`);
+  let file;
+  try { file = await download(t, ep, dl, log); } catch (e) { throw new Error(`descarga a medias, se retoma al reanudar: ${e.message}`); }
   try {
-    const file = await download(t, ep, dl, log);
     const dur = +(await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file])).trim();
     let subs = await subtitles(file, dl).catch(() => []);
     if (subs.length < 20) subs = await whisperSubs(file, dl, log).catch((e) => { log(`⚠️ Whisper: ${e.message.slice(0, 120)}`); return []; });
@@ -188,7 +219,9 @@ export async function episodeScenes(entry, dir, log, context = '', span = '200-3
       await ff(['-ss', String(bs), '-t', String(bd), '-i', file, '-map', '0:v:0', '-map', `0:${jpn.index}`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-c:a', 'aac', '-b:a', '192k', bfile]);
       burst = { file: bfile, dur: bd, es: loc.burst.es };
     }
-    const out = { scenes, burst };
+    // el guion se escribe con esto: lo que de verdad se verá y el diálogo original de esos tramos
+    const inWin = (x) => loc.windows.some((w) => x.s >= w.s - 5 && x.s <= w.e + 5);
+    const out = { scenes, burst, windows: loc.windows, dialog: subs.filter(inWin).map((x) => x.text).join(' / ').slice(0, 4000) };
     await writeFile(cache, JSON.stringify(out));
     return out;
   } finally {

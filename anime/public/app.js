@@ -52,7 +52,7 @@ function startTask(title) {
   $('#task-now').textContent = 'Empezando…';
   $('#task-log').innerHTML = '';
   $('#task-close').textContent = 'Cancelar';
-  $('#task-close').onclick = () => ctrl.abort();
+  $('#task-close').onclick = () => fetch('/api/cancel', { method: 'POST' }).finally(() => ctrl.abort());
   const t0 = Date.now();
   const tick = setInterval(() => { const s = Math.floor((Date.now() - t0) / 1000); $('#task-time').textContent = s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`; }, 500);
   const add = (text, cls = '') => {

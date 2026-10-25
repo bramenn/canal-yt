@@ -4,8 +4,8 @@
 // + montaje nativo 16:9 con escenas de tráileres/PV, Cinema Card para imágenes, subtítulos dinámicos de 3-5 palabras,
 // cama musical ambiental con ducking + efectos de sonido, miniatura 16:9 y marcas de tiempo (Chapters) en la descripción.
 import path from 'node:path';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
+import { existsSync, statSync } from 'node:fs';
 import { claudeStep } from '../../lib/claude.js';
 import { run } from '../../lib/ytdlp.js';
 import { downloadImages as images } from '../../lib/brave.js';
@@ -152,20 +152,29 @@ REGLAS DE ESTILO Y RITMO:
   return { block: ev.data, cost: ev.cost ?? 0 };
 }
 
-export async function writeChapterScript(ch, plan, { isLast = false, minWords = 135, maxWords = 160 } = {}, emit, track) {
+export async function writeChapterScript(ch, plan, { isLast = false, minWords = 135, maxWords = 160, screen = null } = {}, emit, track) {
+  const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+  // tramos del episodio ya recortados (cachés antiguas: el «qué pasa» va al inicio de cada descripción)
+  const tramos = screen?.windows?.map((w) => `- ${mmss(w.s)}-${mmss(w.e)}: ${w.what}`)
+    ?? [...new Set((screen?.scenes ?? []).map((x) => x.desc?.match(/^ep\. \d+ \((.+?)\):/)?.[1]).filter(Boolean))].map((w) => `- ${w}`);
+  const enPantalla = tramos.length ? `
+LO QUE SE VERÁ EN PANTALLA (tramos recortados del episodio, en orden). Narra SOLO lo que pasa aquí y en este mismo orden: cada frase debe poder ilustrarse con un plano de estos tramos.
+${tramos.join('\n')}${screen.dialog ? `\nDIÁLOGO ORIGINAL de esos tramos (inglés; úsalo para nombres, técnicas y frases exactas): ${screen.dialog}` : ''}
+` : '';
   const prompt = `Escribe el guion narrado del PUESTO #${ch.number} («${ch.heading}») del top 10 «${plan.title}» (cuenta atrás del #10 al #1).
 ANIME: ${ch.anime} (episodio ${ch.episode})
 MOMENTO QUE SE VERÁ EN PANTALLA: ${ch.moment}
 GIRO / ENFOQUE: ${ch.angle}
 DATOS VERIFICADOS: ${ch.facts}
-
+${enPantalla}
 EXTENSIÓN OBLIGATORIA para alcanzar los 8-10 minutos totales del vídeo:
 - Este puesto debe tener entre **${minWords} y ${maxWords} palabras en total** (${Math.round(minWords / 12)} a ${Math.round(maxWords / 12)} frases de 10-14 palabras cada una).
 - No rellenes con paja: desarrolla la historia paso a paso como un mini-documental apasionante:
   1. Abre con «Número ${ch.number}» y entra de lleno en la escena de ${ch.anime}.
-  2. Explica el contexto dentro de la historia (en qué arco y episodio ocurre y qué estaba en juego). Narra el momento EN EL ORDEN en que pasa en el episodio: se verá en pantalla mientras hablas.
-  3. Revela el detalle técnico, secreto de producción, regla o giro exacto con todos los nombres y cifras reales.
-  4. Cuenta qué consecuencias tuvo en la trama o en los fans y por qué este caso es tan especial.
+  2. Sitúa la escena en UNA frase corta (qué estaba en juego).
+  3. Narra el momento paso a paso EN EL ORDEN en que pasa en el episodio, con los nombres de personajes y técnicas: se verá en pantalla mientras hablas. Es el grueso del puesto.
+  4. Explica por qué ese momento rompe el límite o la regla, dentro de la propia historia.
+- PROHIBIDO llenar con lo que no se ve: fechas de emisión, número de episodio o temporada, años, críticas o webs, canciones, listas de ventas, comparaciones con el manga. Como mucho UNA frase corta así en todo el puesto.
   ${isLast ? '5. Como este es el PUESTO #1, el último del vídeo, cierra las últimas 2-3 frases con una conclusión potente del vídeo entero y una pregunta directa para que la audiencia debata en los comentarios.' : '5. Cierra con una frase contundente que deje con ganas de ver qué ocupa el siguiente puesto.'}
 
 VISUALES EN 16:9 ("lines"):
@@ -217,7 +226,7 @@ Dialogue: 2,0:00:00.08,${assTime(CARD_DUR)},AnimeTag,,0,0,0,,{\\pos(960,665)\\fa
     const inputArgs = isVid ? ['-ss', '1', '-t', String(CARD_DUR + 0.1), '-i', bgFile] : ['-loop', '1', '-t', String(CARD_DUR), '-i', bgFile];
     await ff([
       ...inputArgs, '-an',
-      '-vf', `scale=${LW * 2}:${LH * 2}:force_original_aspect_ratio=increase,crop=${LW * 2}:${LH * 2},zoompan=z='1+0.06*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${isVid ? 1 : frames}:s=${LW}x${LH}:fps=${FPS},boxblur=22:2,eq=brightness=-0.38:saturation=0.85:contrast=1.1,vignette=PI/4,subtitles=${assFile}:fontsdir=${FONTS},format=yuv420p`,
+      '-vf', `setpts=PTS-STARTPTS,scale=${LW * 2}:${LH * 2}:force_original_aspect_ratio=increase,crop=${LW * 2}:${LH * 2},zoompan=z='1+0.06*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${isVid ? 1 : frames}:s=${LW}x${LH}:fps=${FPS},boxblur=22:2,eq=brightness=-0.38:saturation=0.85:contrast=1.1,vignette=PI/4,tpad=stop_mode=clone:stop_duration=${CARD_DUR},setpts=N/${FPS}/TB,subtitles=${assFile}:fontsdir=${FONTS},format=yuv420p`,
       '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out,
     ]);
   } else {
@@ -232,7 +241,8 @@ Dialogue: 2,0:00:00.08,${assTime(CARD_DUR)},AnimeTag,,0,0,0,,{\\pos(960,665)\\fa
 /** Renderiza un corte en formato horizontal 16:9 (1920×1080, 30 fps). */
 async function renderCut16x9(slot, item, uses, out) {
   const dur = slot.e - slot.s;
-  const frames = Math.max(1, Math.round(dur * FPS));
+  // por los bordes y no por la duración: así el redondeo no se acumula corte a corte
+  const frames = Math.max(1, Math.round(slot.e * FPS) - Math.round(slot.s * FPS));
   const punchAt = slot.emph != null ? Math.round(slot.emph * FPS) : null;
   const punchDur = Math.round(0.32 * FPS);
   const fx = clamp(item.focusX, 0.08, 0.92, 0.5);
@@ -274,7 +284,7 @@ async function renderCut16x9(slot, item, uses, out) {
     ? `split[a][b];[a]scale=${LW}:${LH}:force_original_aspect_ratio=increase,crop=${LW}:${LH},boxblur=28:2,eq=brightness=-0.28:saturation=0.8[bg];[b]scale=-2:${LH}:flags=lanczos,cas=0.40[fg];[bg][fg]overlay=(W-w)/2:0`
     // Escala ligeramente mayor (2080×1170) y recorta la franja inferior por si el PV traía subtítulos quemados abajo + CAS nitidez
     : `scale=2080:1170:force_original_aspect_ratio=increase:flags=lanczos+accurate_rnd,crop=${LW}:${LH}:(iw-ow)/2:0,cas=0.40`;
-  await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),${frame},fps=${FPS}${zoom},format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
+  await ff(['-ss', String(start), '-t', String(dur / slow + 0.05), '-i', item.file, '-an', '-vf', `setpts=${slow.toFixed(3)}*(PTS-STARTPTS),${frame},fps=${FPS}${zoom},tpad=stop_mode=clone:stop_duration=5,format=yuv420p`, '-frames:v', String(frames), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', out]);
 }
 
 /** Subtítulos 16:9 (grupos de 3-5 palabras en la parte inferior) + insignia superior del capítulo/anime + marca @notianimes. */
@@ -295,7 +305,9 @@ function subtitles16x9(words, { yellow = [], red = [] }, segmentsMeta, total) {
     i += g.length;
   }
   const subEvents = groups.map((g, i) => {
-    const s = g[0].s, e = Math.min(groups[i + 1]?.[0].s ?? total, g.at(-1).e + 0.45);
+    // antes de una pausa larga (la tarjeta del siguiente puesto) el texto no se queda encima
+    const next = groups[i + 1]?.[0].s ?? total;
+    const s = g[0].s, e = Math.min(next, g.at(-1).e + (next - g.at(-1).e > 1 ? 0.1 : 0.45));
     const text = g.map((w) => `{\\c${R.has(norm(w.w)) ? RED : Y.has(norm(w.w)) ? YELLOW : WHITE}}${assEsc(w.w.toUpperCase().replace(/[.,;:]+$/, ''))}`).join(' ');
     return `Dialogue: 2,${assTime(s)},${assTime(e)},Sub,,0,0,0,,{\\pos(960,1010)\\fscx88\\fscy88\\t(0,75,\\fscx100\\fscy100)}${text}`;
   });
@@ -375,7 +387,8 @@ async function buildBlockCatalog(block, animeDefault, sceneQuery, sourcesUrls, c
     const picked = await pickRelevant(await images(l.query, dir), l.query, `${context}. Frase: ${l.text}. Visual: ${l.visual || l.query}`, dir, { specific: true });
     picked.slice(0, 2).forEach((f) => rawImages.push({ kind: 'image', file: f, line, desc: l.visual || l.query, hint: `${l.query} (${l.visual || l.text})`, shot: 'foto', action: 0 }));
   }
-  const newsPics = await newsImages(sourcesUrls, dir);
+  // con el episodio, las fotos de las webs fuente (collages, capturas con texto) sobran
+  const newsPics = enough ? [] : await newsImages(sourcesUrls, dir);
   for (const n of newsPics) rawImages.push({ kind: 'image', file: n.file, news: true, desc: `foto de la fuente: ${n.title}`, hint: `noticia: ${n.title}`, who: '', shot: 'foto', action: 0 });
 
   const checkedImages = await catalogImages(rawImages, context, dir, log);
@@ -388,6 +401,9 @@ async function buildBlockCatalog(block, animeDefault, sceneQuery, sourcesUrls, c
  * blocks: [{ key, number, heading, anime, scene_query, sources, script, voiceFile, words, duration }]
  */
 export async function montageLong({ plan, blocks, dir, thumb = null }, log, signal) {
+  // al reanudar o rehacer puestos sueltos, los bloques llegan desordenados: manda el orden del plan
+  const order = ['intro', ...plan.chapters.map((c) => `ch${c.number}`)];
+  blocks = blocks.toSorted((x, y) => order.indexOf(x.key) - order.indexOf(y.key));
   await mkdir(dir, { recursive: true });
   const trailerCache = new Map();
   const videoParts = [];
@@ -422,12 +438,16 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
         .catch((e) => { log(`⚠️ #${b.number} sin episodio (${e.message.slice(0, 120)}): uso tráileres`); return null; }));
     }
   }));
+  // descargas que no se completaron: ya no se van a usar
+  for (const f of await readdir(dir)) if (f.endsWith('-dl')) await rm(path.join(dir, f), { recursive: true, force: true });
   // la intro adelanta lo mejor de cada puesto
   const teaser = [...epMat.entries()].flatMap(([key, m]) => {
     const b = blocks.find((x) => x.key === key);
     return (m?.scenes ?? []).toSorted((x, y) => (y.action ?? 0) - (x.action ?? 0)).slice(0, 6).map((x) => ({ ...x, anime: b.anime, desc: `#${b.number} ${b.anime}, ${x.desc}` }));
   });
-  for (const [bi, b] of blocks.entries()) {
+  // cada puesto se edita por su cuenta (material, edición con IA, cortes): de 3 en 3, casi todo es esperar a la IA
+  // ponytail: en paralelo, un puesto no ve las tomas que eligen los otros 2 a la vez; la revisión final avisa si se repite algo
+  const prepBlock = async (b, bi) => {
     if (signal?.aborted) throw new Error('Cancelado');
     (b.script.yellow ?? []).forEach((w) => allYellow.add(w));
     (b.script.red ?? []).forEach((w) => allRed.add(w));
@@ -437,26 +457,18 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
     if (!fullCatalog.length) throw new Error(`Sin material visual para el bloque ${b.heading}`);
 
     // Si es un capítulo numerado (> 0), insertamos primero su tarjeta de capítulo de 2,0 s
-    if (b.number > 0) {
-      chaptersTimeline.push({ number: b.number, heading: b.heading, anime: b.anime, start: cursor });
-      const cardOut = path.join(dir, `seg-card-${b.number}.mp4`);
+    const cardOut = b.number > 0 ? path.join(dir, `seg-card-${b.number}.mp4`) : null;
+    if (cardOut) {
       const bgSample = fullCatalog.find((c) => c.kind === 'video')?.file ?? fullCatalog[0]?.file;
       await renderChapterCard({ number: b.number, heading: b.heading, anime: b.anime, bgFile: bgSample, dir, out: cardOut, top });
-      videoParts.push(cardOut);
-      audioSegments.push(silenceCard);
-      cardRanges.push([cursor, cursor + CARD_DUR]);
-      allImpact.push(+(cursor + 0.12).toFixed(2));
-      allWhoosh.push(+(cursor + CARD_DUR - 0.18).toFixed(2));
-      cursor += CARD_DUR;
-    } else {
-      chaptersTimeline.push({ number: 0, heading: 'Introducción', anime: plan.main_anime, start: 0 });
     }
 
-    const segStart = cursor;
     const dur = b.duration;
     const lines = lineTimes(b.script.lines, b.words, dur);
     // en un vídeo largo el plano respira más que en un short (WatchMojo: 3-4 s); con 2,6 s se agotaban los planos del episodio y se repetían
     const slots = cutSlots(lines, b.words, b.script, { min: 2.2, target: 3.2, max: 4.6, hook: bi === 0 ? 2 : 0 });
+    // el último plano llega hasta el final de la voz: si no, cada puesto se queda ~0,15 s corto y la voz se adelanta a la imagen
+    slots.at(-1).e = dur;
     // lo ya usado en otros capítulos solo vuelve si falta material nuevo, y marcado para que el editor lo deje al final
     const fresh = fullCatalog.filter((c) => !usedScenes.has(sceneKey(c)));
     const catalog = fresh.length >= slots.length ? fresh
@@ -465,6 +477,8 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
     log(`🎬 Editando ${bi === 0 ? 'Introducción' : `Cap. ${b.number}`} (${slots.length} cortes 16:9 con ${catalog.length} planos / ${takes} tomas)…`);
     const { plan: editPlan, climax, motion } = await planEdit({ slots, lines, catalog, context }, log);
     const byId = new Map(catalog.map((c) => [c.id, c]));
+    // se reserva ya lo elegido, para que los puestos que se editan a la vez no lo cojan también
+    if (bi > 0) editPlan.forEach((id) => byId.get(id) && usedScenes.add(sceneKey(byId.get(id))));
     const uses = new Map();
     const parts = [];
     for (let i = 0; i < slots.length; i++) {
@@ -489,6 +503,41 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
     if (bi > 0) editPlan.forEach((id) => byId.get(id) && usedScenes.add(sceneKey(byId.get(id))));
     const tx = planTransitions({ slots, lines, plan: editPlan, byId, motion, climax });
     await applyPairTransitions(parts, slots, tx.transitions, { fps: FPS, w: LW, h: LH });
+
+    // 2-4 s del audio original (grito, golpe, frase icónica) al cerrar el puesto, con su traducción como subtítulo
+    const burst = epMat.get(b.key)?.burst;
+    let bv = null, ba = null, bd = 0;
+    if (burst && existsSync(burst.file)) {
+      bd = Math.round(burst.dur * FPS) / FPS;
+      bv = path.join(dir, `seg-burst-${b.number}.mp4`); ba = path.join(dir, `seg-burst-${b.number}.wav`);
+      await ff(['-i', burst.file, '-an', '-vf', `split[a][b];[a]scale=${LW}:${LH}:force_original_aspect_ratio=increase,crop=${LW}:${LH},boxblur=28:2,eq=brightness=-0.28:saturation=0.8[bg];[b]scale=-2:${LH}:flags=lanczos,scale='min(iw,${LW})':-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=${FPS},format=yuv420p`, '-frames:v', String(Math.round(bd * FPS)), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', bv]);
+      // largo exacto por muestras: con «-t» loudnorm dejaba 0,09 s menos y la voz se adelantaba a la imagen
+      const n = Math.round(bd * 44100);
+      await ff(['-i', burst.file, '-vn', '-af', `loudnorm=I=-16:TP=-1.5,aresample=44100,apad=whole_len=${n},atrim=end_sample=${n},afade=t=in:d=0.08,afade=t=out:st=${(bd - 0.25).toFixed(2)}:d=0.25`, '-ac', '2', '-ar', '44100', ba]);
+    }
+    return { cardOut, dur, lines, slots, parts, tx, burst, bv, ba, bd };
+  };
+  const prepped = [];
+  const todo = [...blocks.entries()];
+  await Promise.all([0, 1, 2].map(async () => {
+    for (let t; (t = todo.shift());) prepped[t[0]] = await prepBlock(t[1], t[0]);
+  }));
+
+  // montaje en orden: tarjeta, cortes y audio original de cada puesto sobre una única línea de tiempo
+  for (const [bi, b] of blocks.entries()) {
+    const { cardOut, dur, lines, slots, parts, tx, burst, bv, ba, bd } = prepped[bi];
+    if (cardOut) {
+      chaptersTimeline.push({ number: b.number, heading: b.heading, anime: b.anime, start: cursor });
+      videoParts.push(cardOut);
+      audioSegments.push(silenceCard);
+      cardRanges.push([cursor, cursor + CARD_DUR]);
+      allImpact.push(+(cursor + 0.12).toFixed(2));
+      allWhoosh.push(+(cursor + CARD_DUR - 0.18).toFixed(2));
+      cursor += CARD_DUR;
+    } else {
+      chaptersTimeline.push({ number: 0, heading: 'Introducción', anime: plan.main_anime, start: 0 });
+    }
+    const segStart = cursor;
     videoParts.push(...parts);
     audioSegments.push(b.voiceFile);
 
@@ -507,13 +556,7 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
     });
     cursor += dur;
 
-    // 2-4 s del audio original (grito, golpe, frase icónica) al cerrar el puesto, con su traducción como subtítulo
-    const burst = epMat.get(b.key)?.burst;
-    if (burst && existsSync(burst.file)) {
-      const bd = Math.round(burst.dur * FPS) / FPS;
-      const bv = path.join(dir, `seg-burst-${b.number}.mp4`), ba = path.join(dir, `seg-burst-${b.number}.wav`);
-      await ff(['-i', burst.file, '-an', '-vf', `split[a][b];[a]scale=${LW}:${LH}:force_original_aspect_ratio=increase,crop=${LW}:${LH},boxblur=28:2,eq=brightness=-0.28:saturation=0.8[bg];[b]scale=-2:${LH}:flags=lanczos,scale='min(iw,${LW})':-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=${FPS},format=yuv420p`, '-frames:v', String(Math.round(bd * FPS)), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', bv]);
-      await ff(['-i', burst.file, '-vn', '-af', `loudnorm=I=-16:TP=-1.5,apad,afade=t=in:d=0.08,afade=t=out:st=${(bd - 0.25).toFixed(2)}:d=0.25`, '-t', String(bd), '-ac', '2', '-ar', '44100', ba]);
+    if (bv) {
       videoParts.push(bv);
       audioSegments.push(ba);
       const ws = String(burst.es ?? '').split(/\s+/).filter(Boolean);
@@ -569,12 +612,24 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
     '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '192k', '-t', String(total), '-movflags', '+faststart', final,
   ], 1800000);
+  // una marca de tiempo rota en un segmento congela la imagen mientras la voz sigue: no se entrega así
+  const vDur = +(await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration', '-of', 'csv=p=0', final])).trim();
+  if (!(vDur > total - 1)) throw new Error(`La imagen dura ${vDur.toFixed(1)} s y la voz ${total.toFixed(1)} s: montaje desincronizado`);
 
   // la intro adelanta escenas de los capítulos a propósito: esas no cuentan como repetición
   const qa = await finalReview(final, total).catch(() => null);
   const introEnd = chaptersTimeline[1]?.start ?? 0;
-  if (qa) { qa.repeats = qa.repeats.filter(([a]) => a >= introEnd); log(fmtQa(qa)); }
-  return { video: final, thumb, duration: Math.round(total), chaptersTimeline, qa };
+  // las tarjetas «PUESTO #n» son oscuras y casi iguales entre sí: ni negro ni repetición
+  const onCard = (t) => cardRanges.some(([s, e]) => t >= s - 0.5 && t <= e + 0.5);
+  if (qa) {
+    qa.repeats = qa.repeats.filter(([a, b]) => a >= introEnd && !onCard(a) && !onCard(b));
+    qa.blacks = qa.blacks.filter(([s]) => !onCard(s));
+    log(fmtQa(qa));
+  }
+  const out = { video: final, thumb, duration: Math.round(total), chaptersTimeline, qa };
+  // si después falla el texto (título, descripción), al reanudar no se vuelve a editar ni renderizar
+  await writeFile(path.join(dir, 'long-out.json'), JSON.stringify(out));
+  return out;
 }
 
 // ---------- 4) Orquestador completo (makeLong y remountLong) ----------
@@ -601,44 +656,83 @@ export function formatChaptersCopy(chaptersTimeline = []) {
   return chaptersTimeline.map((c) => `${fmtChapterTime(c.start)} ${c.number > 0 ? `${top ? '#' : ''}${c.number}${top ? '' : '.'} ${c.heading} (${c.anime})` : c.heading}`).join('\n');
 }
 
-export async function makeLong({ id, topic = '', voiceId, learn = '', avoid = [], recentFranchises = [] }, deps, emit, track, signal) {
-  const log = (text) => emit({ type: 'log', text });
-  let cost = 0;
-  log(`🔎 Investigando tema y estructurando el Top 10 del vídeo largo (8-10 min)…`);
-  const { plan, cost: c0 } = await findLongPlan({ topic, avoid, recentFranchises, learn }, emit, track);
-  cost += c0;
-  log(`📋 «${plan.title}» · Top 10: ${plan.chapters.map((c) => `#${c.number} ${c.anime} ep. ${c.episode}`).join(' · ')}`);
-
+/** Vuelve a cargar las voces ya hechas (sin pagar ElevenLabs) con sus tiempos por palabra. */
+async function realign(saved, { tts, aligner }, log, signal) {
   const blocks = [];
-  log('✍️ Escribiendo introducción con gancho…');
-  const { block: introScript, cost: cIntro } = await writeIntroScript(plan, emit, track);
-  cost += cIntro;
-  const introAudio = await voiceAndAlignBlock('intro', id, introScript, voiceId, deps, log, signal);
-  blocks.push({
-    key: 'intro',
-    number: 0,
-    heading: 'Introducción',
-    anime: plan.main_anime,
-    scene_query: plan.chapters[0]?.scene_query || plan.main_anime,
-    sources: plan.chapters[0]?.sources ?? [],
-    script: introScript,
-    ...introAudio,
-  });
+  for (const b of saved) {
+    const file = path.join(tts.AUDIO_DIR, decodeURIComponent(b.voiceUrl.replace(/^\/audio\//, '')));
+    const text = b.script.lines.map((l) => l.text).join(' ');
+    const [al] = await aligner.align([{ index: 0, file, prompt: text }], log, signal);
+    const raw = (al?.words ?? []).map((w) => ({ w: w.w.trim(), s: w.s, e: w.e })).filter((w) => w.w);
+    const { file: voiceFile, words, duration } = await tightenVoice(file, raw, al.duration ?? raw.at(-1).e);
+    blocks.push({ ...b, voiceFile, words, duration });
+  }
+  return blocks;
+}
+
+/** draft: borrador de un intento anterior; se salta el plan y los bloques ya locutados. */
+export async function makeLong({ id, topic = '', voiceId, learn = '', avoid = [], recentFranchises = [], draft = null }, deps, emit, track, signal) {
+  const log = (text) => emit({ type: 'log', text });
+  let cost = draft?.cost ?? 0;
+  let plan = draft?.plan;
+  if (!plan) {
+    log(`🔎 Investigando tema y estructurando el Top 10 del vídeo largo (8-10 min)…`);
+    const r = await findLongPlan({ topic, avoid, recentFranchises, learn }, emit, track);
+    plan = r.plan;
+    cost += r.cost;
+  }
+  log(`📋 «${plan.title}» · Top 10: ${plan.chapters.map((c) => `#${c.number} ${c.anime} ep. ${c.episode}`).join(' · ')}`);
+  const blocks = draft ? await realign(draft.blocks, deps, log, signal) : [];
+  if (blocks.length) log(`♻️ Retomo con ${blocks.length} bloques ya escritos y locutados`);
+  // tras cada bloque: si se corta la red o falta espacio, se retoma desde aquí sin volver a pagar voces
+  const save = () => saveDraft({ id, plan, blocks, voiceId, cost }, deps.mediaDir);
+  // al reanudar no se reescribe: un borrador más nuevo que el montaje obligaría a montar otra vez
+  if (!draft) await save();
+  // mientras se escriben guiones y voces, los episodios ya van bajando (el montaje recoge esas mismas descargas)
+  const dir = path.join(deps.mediaDir, id);
+  const queue = plan.chapters.filter((c) => c.episode > 0);
+  Promise.all([0, 1, 2].map(async () => {
+    for (let c; !signal?.aborted && (c = queue.shift());) {
+      await episodeScenes(c, dir, log, `${c.anime}: ${c.heading}`).catch((e) => log(`⚠️ #${c.number}: ${e.message.slice(0, 120)} (lo reintento al montar)`));
+    }
+  }));
+
+  if (!blocks.some((b) => b.key === 'intro')) {
+    log('✍️ Escribiendo introducción con gancho…');
+    const { block: introScript, cost: cIntro } = await writeIntroScript(plan, emit, track);
+    cost += cIntro;
+    const introAudio = await voiceAndAlignBlock('intro', id, introScript, voiceId, deps, log, signal);
+    blocks.push({
+      key: 'intro',
+      number: 0,
+      heading: 'Introducción',
+      anime: plan.main_anime,
+      scene_query: plan.chapters[0]?.scene_query || plan.main_anime,
+      sources: plan.chapters[0]?.sources ?? [],
+      script: introScript,
+      ...introAudio,
+    });
+    await save();
+  }
 
   // Calculamos cuántas palabras por capítulo necesitamos para superar con holgura los 8 minutos (485 s)
   for (const [idx, ch] of plan.chapters.entries()) {
     if (signal?.aborted) throw new Error('Cancelado');
+    if (blocks.some((b) => b.key === `ch${ch.number}`)) continue;
     const elapsed = blocks.reduce((s, x) => s + x.duration + (x.number > 0 ? CARD_DUR : 0), 0);
     const remainingChapters = plan.chapters.length - idx;
     // ~9 min en total: cada puesto lleva además su tarjeta y ~3 s de audio original
     const neededSecsPerChapter = Math.max(44, (535 - elapsed) / remainingChapters - CARD_DUR - 3);
     const minWords = Math.min(165, Math.max(125, Math.round(neededSecsPerChapter * 2.95)));
     const maxWords = minWords + 25;
-    log(`✍️ Guion del Capítulo ${ch.number}/${plan.chapters.length}: «${ch.heading}» (${ch.anime})…`);
+    // primero el episodio (ya viene bajando desde el plan): el guion narra lo que de verdad saldrá en pantalla
+    const screen = ch.episode > 0 ? await episodeScenes(ch, dir, log, `${ch.anime}: ${ch.heading}`).catch(() => null) : null;
+    log(`✍️ Guion del Capítulo ${ch.number}/${plan.chapters.length}: «${ch.heading}» (${ch.anime})${screen ? ' sobre sus escenas reales' : ''}…`);
     const { block: chScript, cost: cCh } = await writeChapterScript(ch, plan, {
       isLast: idx === plan.chapters.length - 1,
       minWords,
       maxWords,
+      screen,
     }, emit, track);
     cost += cCh;
     const chAudio = await voiceAndAlignBlock(`ch${ch.number}`, id, chScript, voiceId, deps, log, signal);
@@ -657,9 +751,9 @@ export async function makeLong({ id, topic = '', voiceId, learn = '', avoid = []
       script: chScript,
       ...chAudio,
     });
+    await save();
   }
 
-  const dir = path.join(deps.mediaDir, id);
   return finishLong({ id, plan, blocks, voiceId, cost }, deps, emit, track, signal);
 }
 
@@ -673,11 +767,15 @@ async function saveDraft({ id, plan, blocks, voiceId, cost }, mediaDir) {
 /** Monta, publica el texto y arma el proyecto a partir de bloques ya guionizados y locutados. */
 async function finishLong({ id, plan, blocks, voiceId, cost = 0 }, deps, emit, track, signal) {
   const log = (text) => emit({ type: 'log', text });
-  await saveDraft({ id, plan, blocks, voiceId, cost }, deps.mediaDir);
   const dir = path.join(deps.mediaDir, id);
+  // montaje ya terminado en un intento anterior (más nuevo que el borrador: al rehacer, el borrador nuevo lo invalida)
+  const outFile = path.join(dir, 'long-out.json'), draftFile = path.join(dir, 'long-draft.json');
+  const done = existsSync(outFile) && existsSync(path.join(dir, 'long.mp4')) && (!existsSync(draftFile) || statSync(outFile).mtimeMs > statSync(draftFile).mtimeMs);
+  await saveDraft({ id, plan, blocks, voiceId, cost }, deps.mediaDir);
   // al reanudar o rehacer, la miniatura que ya había se conserva
   const thumb = existsSync(path.join(dir, 'thumb.jpg')) ? { full: path.join(dir, 'thumb-4k.jpg'), small: path.join(dir, 'thumb.jpg') } : null;
-  const out = await montageLong({ plan, blocks, dir, thumb }, log, signal);
+  if (done) log('♻️ El vídeo ya estaba montado: solo falta el texto');
+  const out = done ? JSON.parse(await readFile(outFile, 'utf8')) : await montageLong({ plan, blocks, dir, thumb }, log, signal);
   const chaptersText = formatChaptersCopy(out.chaptersTimeline);
 
   const about = `Vídeo largo de YouTube (16:9) sobre ${plan.main_anime}: «${plan.title}». Enfoque: ${plan.angle}.\nCapítulos:\n${chaptersText}`;
@@ -686,10 +784,11 @@ async function finishLong({ id, plan, blocks, voiceId, cost = 0 }, deps, emit, t
     brand: BRAND,
     keywordsHint: 'el nombre del anime principal y el tema concreto buscable en YouTube',
     includeComment: true,
+    long: true,
   }, emit, track);
-  if (copy?.youtube) {
-    copy.youtube.description = `${copy.youtube.description.trim()}\n\n📌 CAPÍTULOS:\n${chaptersText}`;
-  }
+  // writeCopy es de Shorts: aquí van los capítulos con sus minutos y sin #Shorts
+  if (copy?.yt_description) copy.yt_description = `${copy.yt_description.trim()}\n\n📌 CAPÍTULOS:\n${chaptersText}`;
+  if (copy?.yt_hashtags) copy.yt_hashtags = copy.yt_hashtags.filter((h) => !/^#?shorts$/i.test(h));
 
   const project = {
     id,
@@ -725,17 +824,7 @@ async function finishLong({ id, plan, blocks, voiceId, cost = 0 }, deps, emit, t
 /** Reanuda un vídeo largo que falló en el montaje, desde su borrador (mismos guiones y voces ya generados). */
 export async function resumeLong(id, deps, emit, track, signal) {
   const draft = JSON.parse(await readFile(path.join(deps.mediaDir, id, 'long-draft.json'), 'utf8'));
-  const log = (text) => emit({ type: 'log', text });
-  const blocks = [];
-  for (const b of draft.blocks) {
-    const file = path.join(deps.tts.AUDIO_DIR, decodeURIComponent(b.voiceUrl.replace(/^\/audio\//, '')));
-    const text = b.script.lines.map((l) => l.text).join(' ');
-    const [al] = await deps.aligner.align([{ index: 0, file, prompt: text }], log, signal);
-    const raw = (al?.words ?? []).map((w) => ({ w: w.w.trim(), s: w.s, e: w.e })).filter((w) => w.w);
-    const { file: voiceFile, words, duration } = await tightenVoice(file, raw, al.duration ?? raw.at(-1).e);
-    blocks.push({ ...b, voiceFile, words, duration });
-  }
-  return finishLong({ id, plan: draft.plan, blocks, voiceId: draft.voiceId, cost: draft.cost }, deps, emit, track, signal);
+  return makeLong({ id, voiceId: draft.voiceId, draft }, deps, emit, track, signal);
 }
 
 /** Re-monta un vídeo largo (16:9) reutilizando su guion por capítulos, sus audios ya generados y su miniatura. */
@@ -744,18 +833,13 @@ export async function remountLong(pj, { tts, aligner, mediaDir }, log = () => {}
   const thumb = existsSync(path.join(dir, 'thumb.jpg'))
     ? { full: path.join(dir, 'thumb-4k.jpg'), small: path.join(dir, 'thumb.jpg') }
     : null;
-  const blocks = [];
-  for (const b of pj.blocks ?? []) {
-    const file = path.join(tts.AUDIO_DIR, decodeURIComponent(b.voiceUrl.replace(/^\/audio\//, '')));
-    const text = b.script.lines.map((l) => l.text).join(' ');
-    const [al] = await aligner.align([{ index: 0, file, prompt: text }], log, signal);
-    const raw = (al?.words ?? []).map((w) => ({ w: w.w.trim(), s: w.s, e: w.e })).filter((w) => w.w);
-    const { file: voiceFile, words, duration } = await tightenVoice(file, raw, al.duration ?? raw.at(-1).e);
-    blocks.push({ ...b, voiceFile, words, duration });
-  }
+  const blocks = await realign(pj.blocks ?? [], { tts, aligner }, log, signal);
   const out = await montageLong({ plan: pj.plan, blocks, dir, thumb }, log, signal);
   pj.duration = out.duration;
   pj.chaptersTimeline = out.chaptersTimeline;
   pj.qa = out.qa;
+  // los minutos de los capítulos cambian al re-montar
+  const copy = pj.script?.copy;
+  if (copy?.yt_description) copy.yt_description = copy.yt_description.replace(/📌 CAPÍTULOS:\n[\s\S]*$/, `📌 CAPÍTULOS:\n${formatChaptersCopy(out.chaptersTimeline)}`);
   return pj;
 }
