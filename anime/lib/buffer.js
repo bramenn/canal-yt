@@ -71,7 +71,7 @@ async function cleanHosted() {
  */
 export { nextSlot };
 
-export async function scheduleInBuffer(pj, { mediaDir, taken, only = null }, log = () => {}) {
+export async function scheduleInBuffer(pj, { mediaDir, taken, only = null, from = Date.now() }, log = () => {}) {
   const c = pj.script?.copy;
   if (!c) throw new Error('Este vídeo no tiene texto de publicación');
   const channels = await bufferChannels();
@@ -89,7 +89,8 @@ export async function scheduleInBuffer(pj, { mediaDir, taken, only = null }, log
   // el comentario recomendado lo pone checkBufferPosts en YouTube (el primer comentario de Facebook es de pago en Buffer)
   const posts = [];
   for (const net of nets) {
-    const dueAt = nextSlot(net, taken[net] ?? new Set());
+    // from: programar a partir de un día concreto (p. ej. repartir una serie de shorts en varios días)
+    const dueAt = nextSlot(net, taken[net] ?? new Set(), from);
     const yt = net === 'youtube';
     const metadata = yt
       ? { youtube: { title: c.yt_title.slice(0, 100), privacy: 'public', categoryId: '1', madeForKids: false, notifySubscribers: true } }
