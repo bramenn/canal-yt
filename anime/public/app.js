@@ -2,6 +2,7 @@
 // se descargan, se copian título y texto, y se rehacen o borran.
 import { stream, getJSON, postJSON } from '/shared/api.js';
 import { copyText } from '/shared/social.js';
+import { nextSlot, fmtSlot } from '/shared/schedule.js';
 
 // sesión caducada o cerrada en otro sitio: de vuelta al login
 const nativeFetch = window.fetch.bind(window);
@@ -146,10 +147,11 @@ const oldText = (p) => `${p.script.title}\n\n${p.script.description}\n\n${(p.scr
 
 function commentBox(p) {
   const comment = p.script?.copy?.suggested_comment?.trim();
-  return `<section class="comment-box" aria-label="Comentario recomendado">
+  const log = (p.replies ?? []).slice(-5).reverse().map((r) => `<div class="hint">↳ <b>${esc(r.author)}</b>: ${esc(r.comment.slice(0, 120))}<br>💬 ${esc(r.reply)}</div>`).join('');
+  return `${p.replies?.length ? `<details class="hint"><summary>💬 ${p.replies.length} respuesta${p.replies.length === 1 ? '' : 's'} automática${p.replies.length === 1 ? '' : 's'} en YouTube</summary>${log}</details>` : ''}<section class="comment-box" aria-label="Comentario recomendado">
     ${comment ? `<label>Comentario recomendado<textarea class="comment-text" readonly rows="3">${esc(comment)}</textarea></label>
     <div class="row wrap"><button data-act="copy-comment">📋 Copiar comentario</button></div>
-    <small class="hint">Pégalo como comentario en tus redes. En YouTube puedes fijarlo.</small>`
+    <small class="hint">${p.buffer ? 'Con Buffer se publica solo en YouTube (al salir el vídeo) y en Facebook (primer comentario). Fíjalo a mano en YouTube Studio; en TikTok, pégalo tú.' : 'Pégalo como comentario en tus redes. En YouTube puedes fijarlo.'}</small>`
     : '<span class="hint">Prepara una pregunta para invitar a conversar, sin rehacer el vídeo.</span><div class="row wrap"><button data-act="comment">💬 Preparar comentario</button></div>'}
   </section>`;
 }
@@ -193,11 +195,13 @@ function renderCard(p) {
     : '<button data-act="tiktok" title="Versión de más de 1 minuto para poder monetizar en TikTok">🎵 Hacer versión TikTok</button>')}
           <button data-act="copy-yt" title="Título, descripción${isLong ? ' con capítulos (00:00)' : ' con pregunta'} y hashtags para YouTube">📋 YouTube</button>
           ${isLong ? '' : '<button data-act="copy-tt" title="Texto con palabras clave, pregunta y hashtags para TikTok">📋 TikTok</button><button data-act="copy-ig" title="Texto para el reel de Instagram (sube aquí el vídeo de YouTube): tu mejor red">📋 Instagram</button>'}
+          ${isLong ? '<button data-act="long-shorts" title="Un short por cada puesto, con la misma voz (no gasta ElevenLabs)">✂️ Sacar shorts</button>' : ''}
+          ${p.buffer ? '' : '<button data-act="buffer" class="primary" title="Sube el vídeo y lo programa en YouTube, TikTok y Facebook a las horas recomendadas">📤 Programar en Buffer</button>'}
           <button data-act="remount" title="Re-montar solo el vídeo manteniendo el mismo guion, voz y miniatura">🎬 Re-montar</button>
           <button data-act="remake" title="Guion, voz y montaje nuevos (con la voz elegida arriba)">🔄 Rehacer</button>
           <button data-act="del" class="danger" title="Borrar">🗑</button>
         </div>
-        ${isLong ? '' : scheduleBox(p)}
+        ${p.buffer ? bufferBox(p) : isLong ? '' : scheduleBox(p)}
         ${isLong ? chaptersBox(p) : ''}
         ${commentBox(p)}
         ${p.viral?.level ? `<div class="viral ${p.viral.level}" title="Comparado con la mediana de tus shorts a la misma edad · ${p.viral.perHour ?? 0} vistas/h ahora">${esc(p.viral.label)}</div>` : ''}
@@ -208,27 +212,26 @@ function renderCard(p) {
     </div>`;
 }
 
-// Horas para publicar (hora de Colombia), separadas ≥1 h en cada red. Facebook, medido (39 reels, oct-2026): 14-16 h y
-// 18-20 h dan 6-10 veces más que la mañana. YouTube no da la hora en su export: horas de más actividad del público latino
-// (picos 18-19 h) y las que ya funcionaron. ponytail: franjas fijas; recalcular con más datos.
-const SLOTS = { youtube: ['12:00', '18:00', '20:00'], facebook: ['14:30', '18:00', '19:30'] };
 let schedule = new Map();
-/** Cada short sin publicar en una red recibe la siguiente franja libre, del más antiguo al más nuevo (3 por día). */
-function planSchedule(shorts) {
+/** Próxima hora recomendada de cada short sin programar ni publicar, desde la hora actual y sin pisar lo ya programado en Buffer. */
+function planSchedule(all) {
   schedule = new Map();
-  for (const net of Object.keys(SLOTS)) {
-    shorts.filter((p) => !p.stats?.[net] && Date.now() - (p.created ?? 0) < 3 * 864e5).sort((a, b) => (a.created ?? 0) - (b.created ?? 0)).forEach((p, i) => {
-      const day = Math.floor(i / SLOTS[net].length);
-      const when = `${day === 0 ? 'hoy' : day === 1 ? 'mañana' : `en ${day} días`} ${SLOTS[net][i % SLOTS[net].length]}`;
-      schedule.set(p.id, { ...schedule.get(p.id), [net]: when });
+  for (const net of ['youtube', 'facebook', 'tiktok']) {
+    const taken = new Set(all.flatMap((p) => p.buffer?.posts ?? []).filter((x) => x.service === net).map((x) => x.dueAt));
+    all.filter((p) => p.kind !== 'long' && !p.buffer && !p.stats?.[net] && Date.now() - (p.created ?? 0) < 3 * 864e5).sort((a, b) => (a.created ?? 0) - (b.created ?? 0)).forEach((p) => {
+      const t = nextSlot(net, taken);
+      taken.add(t);
+      schedule.set(p.id, { ...schedule.get(p.id), [net]: fmtSlot(t) });
     });
   }
 }
-const scheduleBox = (p) => { const s = schedule.get(p.id); return s ? `<div class="hint schedule" title="Horas recomendadas (Colombia), una franja distinta para cada short pendiente">🕐 Publicar: ${s.youtube ? `YouTube ${s.youtube}` : ''}${s.youtube && s.facebook ? ' · ' : ''}${s.facebook ? `Facebook ${s.facebook}` : ''}</div>` : ''; };
+const NET = { youtube: 'YouTube', tiktok: 'TikTok', facebook: 'Facebook' };
+const bufferBox = (p) => `<div class="hint schedule" title="Programado en Buffer (hora de Colombia)">📤 En Buffer: ${p.buffer.posts.map((x) => `${x.error ? '⚠️' : x.url ? '✅' : ''}${x.thumb ? '🖼' : ''}${x.comment ? '💬' : ''}${NET[x.service] ?? x.service} ${fmtSlot(x.dueAt)}`).join(' · ')}</div>`;
+const scheduleBox = (p) => { const s = schedule.get(p.id); return s ? `<div class="hint schedule" title="Horas recomendadas (Colombia): 4 franjas al día por red, desde ahora y sin pisar lo programado en Buffer">🕐 Publicar: ${Object.entries(s).map(([net, when]) => `${NET[net]} ${when}`).join(' · ')}</div>` : ''; };
 
 function render() {
   const shortsList = list.filter((p) => p.kind !== 'long');
-  planSchedule(shortsList);
+  planSchedule(list);
   const longsList = list.filter((p) => p.kind === 'long');
   $('#shorts').innerHTML = shortsList.length ? shortsList.map(renderCard).join('') : '<div class="empty">Aún no hay shorts. Pulsa «Crear shorts de hoy».</div>';
   if ($('#longs')) $('#longs').innerHTML = longsList.length ? longsList.map(renderCard).join('') : '<div class="empty">Aún no hay vídeos largos 16:9. Pulsa «Crear vídeo largo (8-10 min)».</div>';
@@ -259,6 +262,8 @@ const onCardClick = async (e) => {
   }
   if (act === 'tiktok') runTask(`Versión TikTok de «${p.story.anime}»`, async (ui) => { const ev = await streamTo(ui, `/api/tiktok/${p.id}`, {}); return `Versión TikTok lista (${ev.data.duration} s)`; });
   if (act === 'thumb') runTask(`Miniatura de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/thumb/${p.id}`, {}); return p.kind === 'long' ? 'Miniatura 16:9 lista' : 'Miniatura lista: ya es el primer fotograma del vídeo'; });
+  if (act === 'buffer') runTask(`Programando «${p.script?.title ?? p.story.anime}» en Buffer`, async (ui) => { const ev = await streamTo(ui, `/api/buffer/${p.id}`, {}); return `Programado en ${ev.data.count} redes`; });
+  if (act === 'long-shorts') runTask(`Shorts de «${p.script?.title ?? p.story.anime}»`, async (ui) => { const ev = await streamTo(ui, `/api/long-shorts/${p.id}`, {}); return ev.data.count ? `${ev.data.count} shorts listos` : 'Todos los puestos ya tenían short'; });
   if (act === 'remount') runTask(`Re-montando vídeo de «${p.story.anime}»`, async (ui) => { await streamTo(ui, `/api/remount/${p.id}`, {}); return 'Vídeo re-montado con el mismo guion y voz'; });
   if (act === 'remake') {
     const voice = p.kind === 'long' ? ($('#long-voice-pick')?.value || $('#voice-pick').value) : $('#voice-pick').value;
@@ -317,6 +322,11 @@ $('#logout').onclick = async () => { await postJSON('/api/logout', {}).catch(() 
 // ================= arranque =================
 const [me, shorts, ai, config] = await Promise.all([getJSON('/api/me'), getJSON('/api/projects').catch(() => []), getJSON('/api/ai-status').catch(() => null), getJSON('/api/config').catch(() => null)]);
 if (config) $('#tiktok-on').checked = config.tiktok;
+if (config) $('#reply-on').checked = config.autoReply;
+$('#reply-on').onchange = async (e) => {
+  try { await postJSON('/api/config', { autoReply: e.target.checked }); toast(e.target.checked ? 'Responderá los comentarios nuevos de YouTube cada 30 min' : 'Respuestas automáticas apagadas', 'ok'); }
+  catch { e.target.checked = !e.target.checked; toast('No se pudo guardar la configuración', 'bad'); }
+};
 $('#tiktok-on').onchange = async (e) => {
   try { await postJSON('/api/config', { tiktok: e.target.checked }); toast(e.target.checked ? 'Se hará también la versión TikTok' : 'Solo versión YouTube (súbela también a TikTok)', 'ok'); }
   catch { e.target.checked = !e.target.checked; toast('No se pudo guardar la configuración', 'bad'); }

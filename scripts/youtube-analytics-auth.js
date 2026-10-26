@@ -8,6 +8,8 @@ import path from 'node:path';
 const scopes = [
   'https://www.googleapis.com/auth/youtube.readonly',
   'https://www.googleapis.com/auth/yt-analytics.readonly',
+  // poner la miniatura a los vídeos que publica Buffer (su API no sube miniaturas)
+  'https://www.googleapis.com/auth/youtube.force-ssl',
 ];
 const clientId = process.env.YOUTUBE_ANALYTICS_CLIENT_ID?.trim();
 const clientSecret = process.env.YOUTUBE_ANALYTICS_CLIENT_SECRET?.trim();

@@ -29,7 +29,7 @@ export async function stream(url, body, onEvent, signal) {
     body: JSON.stringify(body),
     signal,
   });
-  if (!res.ok || !res.body) throw new Error(`El servidor respondió ${res.status}`);
+  if (!res.ok || !res.body) throw new Error((await res.json().catch(() => null))?.error ?? `El servidor respondió ${res.status}`);
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';

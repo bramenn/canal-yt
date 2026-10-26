@@ -14,7 +14,7 @@ import { gate, serveFrom } from '../lib/web.js';
 import { findStories, thumbText, franchiseOf } from './lib/story.js';
 import { makeThumb, makeThumb16x9, firstFrame } from './lib/thumb.js';
 import { readdir, readFile, writeFile, appendFile, unlink } from 'node:fs/promises';
-import { makeShort, makeTiktok, copyAbout, remountProject } from './lib/make.js';
+import { makeShort, makeTiktok, copyAbout, remountProject, shortsFromLong } from './lib/make.js';
 import { makeLong, remountLong, resumeLong } from './lib/long.js';
 import { writeComment } from '../lib/social.js';
 import { refreshStats } from '../lib/stats.js';
@@ -22,6 +22,8 @@ import { virality, learnings } from '../lib/virality.js';
 import { youtubeAnalyticsMissingConfig } from '../lib/youtube-analytics.js';
 import { youtubeLearning } from './lib/youtube-learning.js';
 import { waitReady } from './lib/episodes.js';
+import { bufferReady, scheduleInBuffer, checkBufferPosts } from './lib/buffer.js';
+import { replyComments } from './lib/replies.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // antes de cargar la voz: sus carpetas cuelgan de PROJECTS_DIR
@@ -66,6 +68,24 @@ setTimeout(() => updateStats().catch((e) => console.error('cifras:', e.message))
 setInterval(() => updateStats().catch((e) => console.error('cifras:', e.message)), 30 * 60000);
 
 // Cola en disco para re-montar proyectos en segundo plano (mismo guion, voz y miniatura)
+// publicaciones de Buffer que ya tocaban: enlace, errores y miniatura de YouTube (Buffer no sube miniaturas)
+setInterval(async () => {
+  if (!bufferReady()) return;
+  for (const pj of await listProjects(TABLE).catch(() => [])) {
+    if (!pj.buffer?.posts?.some((x) => !x.done && x.dueAt <= Date.now())) continue;
+    if (await checkBufferPosts(pj, MEDIA, console.log).catch((e) => { console.error('buffer:', e.message); return false; })) await saveProject(pj, null, TABLE);
+  }
+}, 10 * 60000);
+// respuestas automáticas a comentarios de YouTube (interruptor en la app; apagado por defecto)
+let replying = false;
+setInterval(async () => {
+  if (replying || (await getSetting(`${TABLE}.autoReply`).catch(() => false)) !== true) return;
+  replying = true;
+  try {
+    const list = (await listProjects(TABLE)).sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
+    await replyComments(list, { save: (pj) => saveProject(pj, null, TABLE), log: console.log });
+  } catch (e) { console.error('respuestas:', e.message); } finally { replying = false; }
+}, 30 * 60000);
 const REMOUNT_QUEUE = path.join(PROJECTS, 'remount-queue.json');
 const REMOUNT_LOG = path.join(PROJECTS, 'remount-status.log');
 let remountBusy = false;
@@ -185,8 +205,12 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
     if (!user) return;
 
     if (p === '/api/config') {
-      if (req.method === 'POST') { const { tiktok } = await readBody(req); await setSetting(`${TABLE}.tiktok`, tiktok !== false); }
-      return sendJSON(res, 200, { tiktok: (await getSetting(`${TABLE}.tiktok`)) !== false });
+      if (req.method === 'POST') {
+        const body = await readBody(req);
+        if ('tiktok' in body) await setSetting(`${TABLE}.tiktok`, body.tiktok !== false);
+        if ('autoReply' in body) await setSetting(`${TABLE}.autoReply`, body.autoReply === true);
+      }
+      return sendJSON(res, 200, { tiktok: (await getSetting(`${TABLE}.tiktok`)) !== false, autoReply: (await getSetting(`${TABLE}.autoReply`)) === true });
     }
 
     if (p === '/api/cancel' && req.method === 'POST') { cancelAt = Date.now(); return sendJSON(res, 200, { ok: true }); }
@@ -303,6 +327,34 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
         await saveProject(pj, user.id, TABLE);
         emit({ type: 'short', project: pj });
         return { ok: true };
+      });
+    }
+    // ---- programar en Buffer (YouTube, TikTok y Facebook) en las horas recomendadas ----
+    if ((m = p.match(/^\/api\/buffer\/([\w-]+)$/)) && req.method === 'POST') {
+      if (!bufferReady()) return sendJSON(res, 400, { error: 'Falta BUFFER_API_KEY en .env (Buffer → Settings → API)' });
+      const pj = await getProject(safeId(m[1]), TABLE);
+      if (!pj) return sendJSON(res, 404, { error: 'No existe' });
+      return task(res, async (emit) => {
+        // horas ya ocupadas por otros vídeos programados, para no publicar dos a la vez en la misma red
+        const taken = {};
+        for (const x of await listProjects(TABLE)) for (const post of x.buffer?.posts ?? []) (taken[post.service] ??= new Set()).add(post.dueAt);
+        const posts = await scheduleInBuffer(pj, { mediaDir: MEDIA, taken }, (text) => emit({ type: 'log', text }));
+        pj.buffer = { at: Date.now(), posts };
+        await saveProject(pj, user.id, TABLE);
+        emit({ type: 'short', project: pj });
+        return { count: posts.length };
+      });
+    }
+    // ---- un short por puesto de un vídeo largo, con su misma voz ----
+    if ((m = p.match(/^\/api\/long-shorts\/([\w-]+)$/)) && req.method === 'POST') {
+      const pj = await getProject(safeId(m[1]), TABLE);
+      if (pj?.kind !== 'long') return sendJSON(res, 404, { error: 'No es un vídeo largo' });
+      return task(res, async (emit, _track, signal) => {
+        const made = await shortsFromLong(pj, { tts, aligner, mediaDir: MEDIA }, {
+          exists: async (id) => !!(await getProject(id, TABLE)),
+          save: async (s) => { await saveProject(s, user.id, TABLE); emit({ type: 'short', project: s }); },
+        }, (text) => emit({ type: 'log', text }), signal);
+        return { count: made.length };
       });
     }
     // ---- cifras de las publicaciones (ahora mismo) ----

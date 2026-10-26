@@ -1,10 +1,13 @@
 // Un short de principio a fin: guion → voz (ElevenLabs) → palabras alineadas (Whisper) → montaje, en dos versiones:
 // YouTube Shorts (~40-45 s) y TikTok (61-66 s: TikTok solo paga los vídeos de más de 1 minuto; AniDosis va a 60-61 s).
 import path from 'node:path';
+import { mkdir, readdir, link, copyFile } from 'node:fs/promises';
 import { writeScript } from './story.js';
 import { montage } from './montage.js';
 import { writeCopy } from '../../lib/social.js';
 import { tightenVoice } from '../../lib/editor.js';
+
+const KEYWORDS = 'el nombre del anime y el personaje, técnica o dato concreto que alguien buscaría: temporada, película, fecha, tráiler, personaje famoso, estudio; escrito como un titular claro y buscable, sin juegos de palabras ni nombres propios de personajes secundarios oscuros que nadie busca (si el secundario no es famoso, descríbelo por su papel junto al protagonista: «Dragon Ball: el villano que Goku mandó a la Luna» en vez de «Toninjinka»; medido: los títulos con personaje o término muy buscado como «Naruto Shippuden: cómo los clones aceleraban el entrenamiento de Naruto» o «Gachiakuta: el episodio que revela el pasado de Amo» multiplican por 4-6× las vistas y las impresiones desde búsquedas)';
 
 /** De qué va el short, para el texto de publicación. */
 export const copyAbout = (story, script) => `Anime: ${story.anime}. Ángulo: ${story.angle}. Datos: ${story.facts}
@@ -65,7 +68,7 @@ export async function makeShort({ id, story, voiceId, learn = '', tiktok: withTi
   const { script, cost: c1 } = await writeScript(story, emit, track, { learn });
   cost += c1;
   log(`📝 «${script.title}» · ${script.lines.length} frases`);
-  script.copy = await writeCopy({ about: copyAbout(story, script), brand: '@notianimes', keywordsHint: 'el nombre del anime y el personaje, técnica o dato concreto que alguien buscaría: temporada, película, fecha, tráiler, personaje famoso, estudio; escrito como un titular claro y buscable, sin juegos de palabras ni nombres propios de personajes secundarios oscuros que nadie busca (si el secundario no es famoso, descríbelo por su papel junto al protagonista: «Dragon Ball: el villano que Goku mandó a la Luna» en vez de «Toninjinka»; medido: los títulos con personaje o término muy buscado como «Naruto Shippuden: cómo los clones aceleraban el entrenamiento de Naruto» o «Gachiakuta: el episodio que revela el pasado de Amo» multiplican por 4-6× las vistas y las impresiones desde búsquedas)', includeComment: true }, emit, track);
+  script.copy = await writeCopy({ about: copyAbout(story, script), brand: '@notianimes', keywordsHint: KEYWORDS, includeComment: true }, emit, track);
 
   const yt = await produce({ id, story, script, voiceId, name: 'short' }, deps, log, signal).catch((e) => {
     if (e.voice) e.partial = { id, story, script, voice: e.voice, duration: 0, video: `/media/${id}/short.mp4`, tiktok: null, thumb: `/media/${id}/thumb-4k.jpg`, thumbSmall: `/media/${id}/thumb.jpg`, cost, failed: true, created: Date.now() };
@@ -110,4 +113,33 @@ export async function remountProject(pj, { tts, aligner, mediaDir }, log = () =>
     pj.tiktok.duration = await remountOne(pj.tiktok.script, pj.tiktok.voice.url, 'tiktok');
   }
   return pj;
+}
+
+/**
+ * Un short por puesto de un vídeo largo, con su guion y su voz ya hechos (no gasta ElevenLabs).
+ * Usa los episodios que ya bajó el largo y salta los puestos que ya tienen short.
+ */
+export async function shortsFromLong(long, deps, { exists, save }, log = () => {}, signal) {
+  const longDir = path.join(deps.mediaDir, long.id);
+  const epFiles = (await readdir(longDir)).filter((f) => f.startsWith('ep-') && !f.endsWith('-dl'));
+  const made = [];
+  for (const b of long.blocks.filter((x) => x.number > 0).toSorted((x, y) => y.number - x.number)) {
+    if (signal?.aborted) throw new Error('Cancelado');
+    const id = `${long.id}s${b.number}`;
+    if (await exists(id)) { log(`♻️ #${b.number} ya tenía short`); continue; }
+    log(`━━ Short del #${b.number}: «${b.heading}» (${b.anime})`);
+    const dir = path.join(deps.mediaDir, id);
+    await mkdir(dir, { recursive: true });
+    // enlaces a los episodios del largo: el montaje los encuentra sin volver a descargarlos
+    for (const f of epFiles) await link(path.join(longDir, f), path.join(dir, f)).catch(() => copyFile(path.join(longDir, f), path.join(dir, f))).catch(() => {});
+    const story = { anime: b.anime, nyaa: b.nyaa, episode: b.episode, moment: b.moment, angle: b.angle, facts: b.facts, sources: b.sources ?? [], type: 'atemporal', fromLong: long.id };
+    const script = { ...b.script, title: b.heading, scene_query: b.scene_query, franchise: long.plan?.main_anime };
+    script.copy = await writeCopy({ about: `${copyAbout(story, script)}\nSale del puesto #${b.number} del Top 10 «${long.plan?.title}» del canal.`, brand: '@notianimes', keywordsHint: KEYWORDS, includeComment: true }, (ev) => ev.type === 'log' && log(ev.text), () => {});
+    if (script.copy?.yt_title) script.title = script.copy.yt_title;
+    const pj = { id, story, script, voice: { ...long.voice, url: b.voiceUrl }, video: `/media/${id}/short.mp4`, tiktok: null, thumb: `/media/${id}/thumb-4k.jpg`, thumbSmall: `/media/${id}/thumb.jpg`, cost: 0, created: Date.now() };
+    await remountProject(pj, deps, log, signal);
+    await save(pj);
+    made.push(pj);
+  }
+  return made;
 }

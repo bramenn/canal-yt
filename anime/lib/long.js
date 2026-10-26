@@ -613,7 +613,7 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
     '-c:a', 'aac', '-b:a', '192k', '-t', String(total), '-movflags', '+faststart', final,
   ], 1800000);
   // una marca de tiempo rota en un segmento congela la imagen mientras la voz sigue: no se entrega así
-  const vDur = +(await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration', '-of', 'csv=p=0', final])).trim();
+  const vDur = parseFloat(await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration', '-of', 'csv=p=0', final]));
   if (!(vDur > total - 1)) throw new Error(`La imagen dura ${vDur.toFixed(1)} s y la voz ${total.toFixed(1)} s: montaje desincronizado`);
 
   // la intro adelanta escenas de los capítulos a propósito: esas no cuentan como repetición
