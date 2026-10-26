@@ -23,8 +23,9 @@ import { youtubeAnalyticsMissingConfig } from '../lib/youtube-analytics.js';
 import { youtubeLearning } from './lib/youtube-learning.js';
 import { waitReady } from './lib/episodes.js';
 import { bufferReady, scheduleInBuffer, checkBufferPosts } from './lib/buffer.js';
+import { fmtSlot } from '../public/js/schedule.js';
 import { replyComments } from './lib/replies.js';
-import { telegramReady, telegramToken, reviewTick, listenTelegram, reviewLearnings } from './lib/review.js';
+import { telegramReady, telegramToken, reviewTick, listenTelegram, reviewLearnings, notify } from './lib/review.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // antes de cargar la voz: sus carpetas cuelgan de PROJECTS_DIR
@@ -88,6 +89,11 @@ if (AUTOPILOT && telegramToken()) {
     byId: (id) => getProject(safeId(id), TABLE),
     byMessage: async (mid) => (await listProjects(TABLE)).find((x) => x.review?.messageId === mid),
     save: (pj) => saveProject(pj, null, TABLE),
+    rejected: (pj) => {
+      if (pj.kind === 'long') return 'Los largos no se rehacen solos: crea otro desde la app si lo quieres.';
+      replacing = replacing.then(() => replaceRejected(pj)).catch((e) => notify(`⚠️ No pude hacer el reemplazo de «${pj.script?.title}»: ${e.message}`));
+      return 'Preparo otro short para reemplazarlo y te lo mando para revisar.';
+    },
   }, console.log);
   setInterval(async () => {
     if (!telegramReady()) return;
@@ -266,9 +272,14 @@ const AUTO_LOG = path.join(PROJECTS, 'autopilot.log');
 const autoLog = (text) => { console.log('[piloto]', text); return appendFile(AUTO_LOG, `[${new Date().toISOString()}] ${text}\n`).catch(() => {}); };
 // solo se publica lo que pasó la revisión final: sin fallo de montaje, negros ni tomas repetidas de sobra
 const publishable = (pj) => pj?.video && !pj.failed && !(pj.qa?.blacks?.length) && (pj.qa?.repeats?.length ?? 0) <= 1;
-async function toBuffer(pj) {
+// horas ya ocupadas por vídeos programados, para no publicar dos a la vez en la misma red; las de lo cancelado o fallido quedan libres
+async function takenSlots() {
   const taken = {};
-  for (const x of await listProjects(TABLE)) for (const post of x.buffer?.posts ?? []) (taken[post.service] ??= new Set()).add(post.dueAt);
+  for (const x of await listProjects(TABLE)) for (const post of x.buffer?.posts ?? []) if (!post.error) (taken[post.service] ??= new Set()).add(post.dueAt);
+  return taken;
+}
+async function toBuffer(pj) {
+  const taken = await takenSlots();
   const posts = await scheduleInBuffer(pj, { mediaDir: MEDIA, taken }, autoLog);
   pj.buffer = { at: Date.now(), posts, auto: true };
   await saveProject(pj, null, TABLE);
@@ -302,6 +313,23 @@ async function weeklyLong() {
   await autoLog(`✅ Largo listo: ${pj.script?.title}`);
 }
 let piloting = false;
+// short rechazado en Telegram: lo reemplaza uno sacado de un largo (sin gastar voz) o, si no hay, uno nuevo; pasa por la misma revisión
+let replacing = Promise.resolve();
+async function replaceRejected(old) {
+  while (piloting) await new Promise((r) => setTimeout(r, 60000)); // de uno en uno: el pod no aguanta dos montajes a la vez
+  piloting = true;
+  try {
+    const emit = (ev) => ev.type === 'log' && autoLog(ev.text);
+    let pj = (await listProjects(TABLE)).filter((x) => x.story?.fromLong && !x.buffer && publishable(x) && x.id !== old.id)
+      .sort((a, b) => (a.created ?? 0) - (b.created ?? 0))[0];
+    pj ??= ((await autoShorts({ count: 1, voice: 'hombre', tiktok: false }, emit, () => {}, new AbortController().signal)).projects ?? []).find(publishable);
+    if (!pj) throw new Error('el short nuevo no pasó la revisión final');
+    await toBuffer(pj);
+    const due = Math.min(...pj.buffer.posts.filter((x) => x.id && !x.done).map((x) => x.dueAt));
+    await autoLog(`🔁 Reemplazo de «${old.script?.title}»: «${pj.script?.title}»`);
+    await notify(`🔁 Reemplazo listo: «${pj.script?.title}» sale ${fmtSlot(due)}. Te llega para revisar antes.`);
+  } finally { piloting = false; }
+}
 setInterval(async () => {
   if (!AUTOPILOT || piloting || (await getSetting(`${TABLE}.autopilotOff`).catch(() => false)) === true) return;
   const now = new Date(Date.now() - 5 * 3600e3); // hora de Colombia en campos UTC
@@ -432,9 +460,7 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
       const pj = await getProject(safeId(m[1]), TABLE);
       if (!pj) return sendJSON(res, 404, { error: 'No existe' });
       return task(res, async (emit) => {
-        // horas ya ocupadas por otros vídeos programados, para no publicar dos a la vez en la misma red
-        const taken = {};
-        for (const x of await listProjects(TABLE)) for (const post of x.buffer?.posts ?? []) (taken[post.service] ??= new Set()).add(post.dueAt);
+        const taken = await takenSlots();
         const posts = await scheduleInBuffer(pj, { mediaDir: MEDIA, taken }, (text) => emit({ type: 'log', text }));
         pj.buffer = { at: Date.now(), posts };
         await saveProject(pj, user.id, TABLE);

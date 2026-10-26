@@ -1,6 +1,6 @@
 // Revisión por Telegram antes de publicar: lo programado en Buffer llega al chat del dueño ~6 h antes con el vídeo, el
 // texto y las horas. 👍 / «✅ Publicar» lo aprueba; 👎 / «❌ No publicar» / responder al mensaje con lo que está mal lo
-// cancela en Buffer y guarda el motivo (el generador lo lee para no repetirlo). Sin respuesta, 30 min antes se cancela.
+// cancela en Buffer, guarda el motivo (el generador lo lee para no repetirlo) y pide un reemplazo. Sin respuesta, se publica.
 // Solo se atiende al chat TELEGRAM_CHAT_ID; cualquier otro remitente se ignora.
 import path from 'node:path';
 import { existsSync, statSync } from 'node:fs';
@@ -15,7 +15,7 @@ export const telegramReady = () => !!(TOKEN && CHAT);
 export const telegramToken = () => !!TOKEN;
 
 const REVIEW_BEFORE = 6 * 3600e3; // se pide la revisión 6 h antes de la primera publicación
-const DEADLINE = 30 * 60e3; // sin respuesta 30 min antes, no se publica
+const DEADLINE = 30 * 60e3; // sin respuesta 30 min antes, se da por aprobado
 const NET = { youtube: 'YouTube', tiktok: 'TikTok', facebook: 'Facebook' };
 const GOOD = new Set(['👍', '❤', '❤️', '🔥', '👏', '🎉', '😍', '💯', '⚡', '👌', '🥰', '🤩']);
 const BAD = new Set(['👎', '💩', '🤬', '😡', '🤮', '😢', '🤔']);
@@ -32,6 +32,7 @@ async function tg(method, body) {
   return j.result;
 }
 const say = (text, extra = {}) => tg('sendMessage', { chat_id: CHAT, text, ...extra });
+export const notify = (text) => (telegramReady() ? say(text).catch(() => {}) : undefined);
 
 const pending = (pj) => (pj.buffer?.posts ?? []).filter((p) => p.id && !p.done);
 const firstDue = (pj) => Math.min(...pending(pj).map((p) => p.dueAt));
@@ -42,7 +43,7 @@ async function sendReview(pj, mediaDir) {
   const c = pj.script?.copy ?? {};
   const when = pending(pj).map((p) => `• ${NET[p.service] ?? p.service}: ${fmtSlot(p.dueAt)}`).join('\n');
   const head = `🕐 Para publicar (hora de Colombia):\n${when}\n\n🎬 ${c.yt_title ?? pj.script?.title}\n\n`;
-  const tail = '\n\n👍 o ✅ = publicar · 👎 o ❌ = no · responde a este mensaje para decir qué está mal';
+  const tail = '\n\n👍 o ✅ = publicar · 👎 o ❌ = no (hago otro) · responde para decir qué está mal · sin respuesta, se publica';
   const caption = (body) => `${head}${body}`.slice(0, 1024 - tail.length) + tail;
   const file = path.join(mediaDir, pj.id, path.basename(pj.video ?? ''));
   let msg;
@@ -67,18 +68,17 @@ async function sendReview(pj, mediaDir) {
   pj.review = { status: 'pending', messageId: msg.message_id, sentAt: Date.now() };
 }
 
-/** Revisa lo programado: pide revisión 6 h antes y cancela lo que llegó a 30 min sin aprobar. Devuelve los proyectos cambiados. */
+/** Revisa lo programado: pide revisión 6 h antes y da por aprobado lo que llegó a 30 min sin respuesta. Devuelve los proyectos cambiados. */
 export async function reviewTick(projects, mediaDir, log = () => {}, { ahead = REVIEW_BEFORE } = {}) {
   const changed = [];
   for (const pj of projects) {
     if (!pending(pj).length || ['approved', 'rejected', 'expired'].includes(pj.review?.status)) continue;
     const left = firstDue(pj) - Date.now();
     if (left < DEADLINE) {
-      // sin aprobación (o sin haber podido pedirla) no se publica nada
-      await cancelBufferPosts(pj, 'sin aprobar a tiempo');
-      pj.review = { ...pj.review, status: 'expired', at: Date.now() };
+      // quien calla otorga: se publica tal cual
+      pj.review = { ...pj.review, status: 'approved', silent: true, at: Date.now() };
       changed.push(pj);
-      await say(`⏰ No se publicará «${pj.script?.title}»: no llegó tu aprobación a tiempo.`, pj.review.messageId ? { reply_to_message_id: pj.review.messageId } : {}).catch(() => {});
+      await say(`⏰ Sin respuesta: «${pj.script?.title}» sale ${fmtSlot(firstDue(pj))}.`, pj.review.messageId ? { reply_to_message_id: pj.review.messageId } : {}).catch(() => {});
     } else if (!pj.review && left < ahead) { // ahead: adelantar la revisión (pruebas)
       try { await sendReview(pj, mediaDir); changed.push(pj); log(`📨 Revisión enviada: ${pj.script?.title}`); }
       catch (e) { log(`⚠️ Telegram: ${e.message}`); }
@@ -87,21 +87,23 @@ export async function reviewTick(projects, mediaDir, log = () => {}, { ahead = R
   return changed;
 }
 
-/** Aplica una decisión del dueño. ok: true = publicar; false = cancelar (con el motivo, si lo dio). */
-async function decide(pj, ok, feedback = '') {
+/** Aplica una decisión del dueño. ok: true = publicar; false = cancelar (con el motivo, si lo dio) y pedir un reemplazo. */
+async function decide(pj, ok, feedback, store) {
   if (ok) {
     if (pj.review?.status === 'rejected') return '⚠️ Ya estaba cancelado en Buffer: vuelve a programarlo desde la app.';
     pj.review = { ...pj.review, status: 'approved', at: Date.now() };
     return `✅ Aprobado: «${pj.script?.title}» sale ${fmtSlot(firstDue(pj))}.`;
   }
-  if (pj.review?.status !== 'rejected') await cancelBufferPosts(pj, 'rechazado en Telegram');
+  const first = pj.review?.status !== 'rejected';
+  if (first) await cancelBufferPosts(pj, 'rechazado en Telegram');
   pj.review = { ...pj.review, status: 'rejected', at: Date.now(), ...(feedback ? { feedback } : {}) };
-  return feedback ? '📝 Anotado: no se publica y lo tendré en cuenta en los próximos vídeos.' : '❌ Cancelado. Responde a este mensaje si quieres decirme qué está mal.';
+  const what = first ? `❌ Cancelado «${pj.script?.title}». ${store.rejected?.(pj) ?? ''}` : '';
+  return `${what}${feedback ? '\n📝 Anotado el motivo: lo tendré en cuenta en los próximos vídeos.' : '\nResponde a este mensaje si quieres decirme qué está mal.'}`.trim();
 }
 
 /**
  * Escucha Telegram (long polling) y aplica botones, reacciones y respuestas del dueño.
- * store: { offset(): n, setOffset(n), byMessage(messageId) → pj, save(pj) }.
+ * store: { offset(): n, setOffset(n), byId(id) → pj, byMessage(messageId) → pj, save(pj), rejected(pj) → texto (pide el reemplazo) }.
  */
 export async function listenTelegram(store, log = () => {}) {
   for (;;) {
@@ -114,7 +116,7 @@ export async function listenTelegram(store, log = () => {}) {
         if (u.callback_query) {
           const [act, id] = String(u.callback_query.data).split(':');
           const pj = await store.byId(id);
-          const text = pj ? await decide(pj, act === 'ok') : 'No encuentro ese vídeo';
+          const text = pj ? await decide(pj, act === 'ok', '', store) : 'No encuentro ese vídeo';
           if (pj) await store.save(pj);
           await tg('answerCallbackQuery', { callback_query_id: u.callback_query.id, text: text.slice(0, 190) });
           await tg('editMessageReplyMarkup', { chat_id: CHAT, message_id: u.callback_query.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
@@ -123,13 +125,13 @@ export async function listenTelegram(store, log = () => {}) {
           const emoji = u.message_reaction.new_reaction?.map((r) => r.emoji).find(Boolean);
           const pj = emoji && await store.byMessage(u.message_reaction.message_id);
           if (!pj || (!GOOD.has(emoji) && !BAD.has(emoji))) continue;
-          const text = await decide(pj, GOOD.has(emoji));
+          const text = await decide(pj, GOOD.has(emoji), '', store);
           await store.save(pj);
           await say(text, { reply_to_message_id: u.message_reaction.message_id });
         } else if (u.message?.text) {
           const pj = u.message.reply_to_message && await store.byMessage(u.message.reply_to_message.message_id);
           if (!pj) { await say('Responde al mensaje del vídeo para decirme qué está mal (o reacciona con 👍 / 👎).'); continue; }
-          const text = await decide(pj, false, u.message.text.slice(0, 1000));
+          const text = await decide(pj, false, u.message.text.slice(0, 1000), store);
           await store.save(pj);
           await say(text, { reply_to_message_id: u.message.message_id });
         }
