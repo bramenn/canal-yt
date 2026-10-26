@@ -165,9 +165,10 @@ export async function youtubeComment(videoId, text) {
 
 /**
  * Revisa las publicaciones programadas que ya tocaban: guarda su enlace o su error y, en YouTube, pone la miniatura.
+ * longUrl: el largo del que sale el short; se enlaza en el comentario (la API no deja poner «vídeo relacionado»).
  * Devuelve true si cambió algo del proyecto (para guardarlo).
  */
-export async function checkBufferPosts(pj, mediaDir, log = () => {}) {
+export async function checkBufferPosts(pj, mediaDir, log = () => {}, longUrl = null) {
   let changed = false;
   for (const p of pj.buffer?.posts ?? []) {
     if (p.done || p.dueAt > Date.now()) continue;
@@ -182,7 +183,7 @@ export async function checkBufferPosts(pj, mediaDir, log = () => {}) {
         try { await setYoutubeThumb(videoId, thumb); p.thumb = true; log(`🖼 Miniatura puesta en YouTube: ${pj.script?.title}`); }
         catch (e) { p.thumbError = e.message.slice(0, 200); }
       }
-      const comment = pj.script?.copy?.suggested_comment?.trim();
+      const comment = [pj.script?.copy?.suggested_comment?.trim(), longUrl && `🎬 Vídeo completo: ${longUrl}`].filter(Boolean).join('\n\n');
       if (videoId && comment) {
         // ponytail: la API de YouTube no permite fijar comentarios; se fija a mano desde YouTube Studio
         try { await youtubeComment(videoId, comment); p.comment = true; }

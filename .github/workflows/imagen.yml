@@ -6,7 +6,7 @@ name: Imagen
 
 on:
   push:
-    branches: [master, feature/nuevoTipoVideo, feature/autopiloto-cluster, feature/aprobacion-telegram, feature/revision-por-silencio]
+    branches: [master, feature/nuevoTipoVideo, feature/autopiloto-cluster, feature/aprobacion-telegram, feature/revision-por-silencio, feature/enlace-largo]
     paths: [futbol/**, comic/**, anime/**, dinero/**, lib/**, public/js/**, scripts/**, package.json, package-lock.json, .github/workflows/imagen.yml]
   workflow_dispatch:
 

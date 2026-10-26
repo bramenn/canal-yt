@@ -78,7 +78,10 @@ setInterval(async () => {
   if (!AUTOPILOT || !bufferReady()) return;
   for (const pj of await listProjects(TABLE).catch(() => [])) {
     if (!pj.buffer?.posts?.some((x) => !x.done && x.dueAt <= Date.now())) continue;
-    if (await checkBufferPosts(pj, MEDIA, console.log).catch((e) => { console.error('buffer:', e.message); return false; })) await saveProject(pj, null, TABLE);
+    // largo del que sale el short: el de Buffer o, si se subió a mano, youtubeUrl
+    const long = pj.story?.fromLong && await getProject(pj.story.fromLong, TABLE).catch(() => null);
+    const longUrl = long?.buffer?.posts?.find((x) => x.service === 'youtube' && x.url)?.url ?? long?.youtubeUrl;
+    if (await checkBufferPosts(pj, MEDIA, console.log, longUrl).catch((e) => { console.error('buffer:', e.message); return false; })) await saveProject(pj, null, TABLE);
   }
 }, 10 * 60000);
 // revisión por Telegram de todo lo programado (6 h antes; sin aprobación, no se publica)
