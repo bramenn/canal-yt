@@ -52,6 +52,7 @@ spec:
           envFrom: [{ secretRef: { name: anime-env } }]
           env:
             - { name: AUTOPILOT, value: '1' }
+            - { name: YOUTUBE_OFF, value: '1' }   # YouTube bloquea las IPs de servidor y de WARP: escenas de nyaa e imágenes
             - { name: PUBLIC_MEDIA_DIR, value: /app/anime/projects/pub }
             - { name: PUBLIC_MEDIA_URL, value: https://bramen.org/nt-pub }
             - name: DATABASE_URL
