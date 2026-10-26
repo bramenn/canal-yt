@@ -24,6 +24,7 @@ import { youtubeLearning } from './lib/youtube-learning.js';
 import { waitReady } from './lib/episodes.js';
 import { bufferReady, scheduleInBuffer, checkBufferPosts } from './lib/buffer.js';
 import { replyComments } from './lib/replies.js';
+import { telegramReady, telegramToken, reviewTick, listenTelegram, reviewLearnings } from './lib/review.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // antes de cargar la voz: sus carpetas cuelgan de PROJECTS_DIR
@@ -44,7 +45,8 @@ if (!(await countUsers())) console.log('\n  ⚠️  No hay usuarios: crea el pri
 const describe = (p) => ({ title: p.script?.title, hook: p.script?.lines?.[0]?.text, angle: `${p.story?.anime}: ${p.story?.angle}` });
 const learnFrom = async () => {
   const projects = await listProjects(TABLE);
-  return youtubeLearning(projects, describe) ?? learnings(projects, describe);
+  // y lo que el dueño rechazó en Telegram, con su motivo
+  return (youtubeLearning(projects, describe) ?? learnings(projects, describe) ?? '') + reviewLearnings(projects);
 };
 const safeId = (id) => String(id).replace(/[^a-z0-9_-]/gi, '').slice(0, 80);
 // las dos voces del canal (biblioteca de ElevenLabs): se elige una al crear o rehacer
@@ -78,6 +80,21 @@ setInterval(async () => {
     if (await checkBufferPosts(pj, MEDIA, console.log).catch((e) => { console.error('buffer:', e.message); return false; })) await saveProject(pj, null, TABLE);
   }
 }, 10 * 60000);
+// revisión por Telegram de todo lo programado (6 h antes; sin aprobación, no se publica)
+if (AUTOPILOT && telegramToken()) {
+  listenTelegram({
+    offset: async () => (await getSetting(`${TABLE}.tgOffset`).catch(() => 0)) ?? 0,
+    setOffset: (n) => setSetting(`${TABLE}.tgOffset`, n),
+    byId: (id) => getProject(safeId(id), TABLE),
+    byMessage: async (mid) => (await listProjects(TABLE)).find((x) => x.review?.messageId === mid),
+    save: (pj) => saveProject(pj, null, TABLE),
+  }, console.log);
+  setInterval(async () => {
+    if (!telegramReady()) return;
+    try { for (const pj of await reviewTick(await listProjects(TABLE), MEDIA, console.log)) await saveProject(pj, null, TABLE); }
+    catch (e) { console.error('revisión:', e.message); }
+  }, 5 * 60000);
+}
 // respuestas automáticas a comentarios de YouTube (interruptor en la app; apagado por defecto)
 let replying = false;
 setInterval(async () => {

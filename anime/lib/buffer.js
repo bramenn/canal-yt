@@ -119,6 +119,15 @@ export async function scheduleInBuffer(pj, { mediaDir, taken, only = null, from 
   return posts;
 }
 
+/** Cancela en Buffer lo que aún no ha salido (rechazado o sin aprobar) y lo deja anotado con el motivo. */
+export async function cancelBufferPosts(pj, why) {
+  for (const p of pj.buffer?.posts ?? []) {
+    if (!p.id || p.done) continue;
+    await gql('mutation($id: PostId!) { deletePost(input: { id: $id }) { __typename ... on MutationError { message } } }', { id: p.id }).catch(() => {});
+    Object.assign(p, { done: true, error: why });
+  }
+}
+
 /** Estado de una publicación en Buffer: { status, externalLink, error }. */
 export async function bufferPost(id) {
   const { post } = await gql('query($id: PostId!) { post(input: { id: $id }) { status externalLink error { message } } }', { id });

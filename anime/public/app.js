@@ -226,7 +226,9 @@ function planSchedule(all) {
   }
 }
 const NET = { youtube: 'YouTube', tiktok: 'TikTok', facebook: 'Facebook' };
-const bufferBox = (p) => `<div class="hint schedule" title="Programado en Buffer (hora de Colombia)">📤 En Buffer: ${p.buffer.posts.map((x) => `${x.error ? '⚠️' : x.url ? '✅' : ''}${x.thumb ? '🖼' : ''}${x.comment ? '💬' : ''}${NET[x.service] ?? x.service} ${fmtSlot(x.dueAt)}`).join(' · ')}</div>`;
+const REVIEW = { pending: '🟡 Esperando tu OK en Telegram', approved: '✅ Aprobado en Telegram', rejected: '❌ Rechazado en Telegram', expired: '⏰ Cancelado: sin aprobación a tiempo' };
+const reviewText = (p) => (p.review ? ` · ${REVIEW[p.review.status] ?? ''}${p.review.feedback ? `: «${esc(p.review.feedback.slice(0, 140))}»` : ''}` : '');
+const bufferBox = (p) => `<div class="hint schedule" title="Programado en Buffer (hora de Colombia)">📤 En Buffer: ${p.buffer.posts.map((x) => `${x.error ? '⚠️' : x.url ? '✅' : ''}${x.thumb ? '🖼' : ''}${x.comment ? '💬' : ''}${NET[x.service] ?? x.service} ${fmtSlot(x.dueAt)}`).join(' · ')}${reviewText(p)}</div>`;
 const scheduleBox = (p) => { const s = schedule.get(p.id); return s ? `<div class="hint schedule" title="Horas recomendadas (Colombia): 4 franjas al día por red, desde ahora y sin pisar lo programado en Buffer">🕐 Publicar: ${Object.entries(s).map(([net, when]) => `${NET[net]} ${when}`).join(' · ')}</div>` : ''; };
 
 function render() {
