@@ -151,7 +151,7 @@ function commentBox(p) {
   return `${p.replies?.length ? `<details class="hint"><summary>💬 ${p.replies.length} respuesta${p.replies.length === 1 ? '' : 's'} automática${p.replies.length === 1 ? '' : 's'} en YouTube</summary>${log}</details>` : ''}<section class="comment-box" aria-label="Comentario recomendado">
     ${comment ? `<label>Comentario recomendado<textarea class="comment-text" readonly rows="3">${esc(comment)}</textarea></label>
     <div class="row wrap"><button data-act="copy-comment">📋 Copiar comentario</button></div>
-    <small class="hint">${p.buffer ? 'Con Buffer se publica solo en YouTube (al salir el vídeo) y en Facebook (primer comentario). Fíjalo a mano en YouTube Studio; en TikTok, pégalo tú.' : 'Pégalo como comentario en tus redes. En YouTube puedes fijarlo.'}</small>`
+    <small class="hint">${p.buffer ? 'Con Buffer se publica solo en YouTube al salir el vídeo: fíjalo a mano en YouTube Studio. En Facebook y TikTok, pégalo tú.' : 'Pégalo como comentario en tus redes. En YouTube puedes fijarlo.'}</small>`
     : '<span class="hint">Prepara una pregunta para invitar a conversar, sin rehacer el vídeo.</span><div class="row wrap"><button data-act="comment">💬 Preparar comentario</button></div>'}
   </section>`;
 }

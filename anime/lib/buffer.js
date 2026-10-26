@@ -71,12 +71,13 @@ async function cleanHosted() {
  */
 export { nextSlot };
 
-export async function scheduleInBuffer(pj, { mediaDir, taken }, log = () => {}) {
+export async function scheduleInBuffer(pj, { mediaDir, taken, only = null }, log = () => {}) {
   const c = pj.script?.copy;
   if (!c) throw new Error('Este vídeo no tiene texto de publicación');
   const channels = await bufferChannels();
   const isLong = pj.kind === 'long';
-  const nets = ['youtube', 'facebook', ...(isLong ? [] : ['tiktok'])].filter((n) => channels[n]);
+  // only: reintentar solo algunas redes (las demás ya estaban programadas)
+  const nets = ['youtube', 'facebook', ...(isLong ? [] : ['tiktok'])].filter((n) => channels[n] && (!only || only.includes(n)));
   if (!nets.length) throw new Error('No hay canales de YouTube, TikTok o Facebook conectados en Buffer');
   const dir = path.join(mediaDir, pj.id);
   const local = (u) => u && path.join(dir, path.basename(u));
@@ -85,15 +86,14 @@ export async function scheduleInBuffer(pj, { mediaDir, taken }, log = () => {}) 
   const tiktokFile = local(pj.tiktok?.video);
   const ttVideo = !isLong && tiktokFile && existsSync(tiktokFile) ? await host(tiktokFile, `${pj.id}-tt`) : video;
 
-  // pregunta para abrir conversación: Facebook la publica Buffer como primer comentario; YouTube, checkBufferPosts
-  const comment = c.suggested_comment?.trim();
+  // el comentario recomendado lo pone checkBufferPosts en YouTube (el primer comentario de Facebook es de pago en Buffer)
   const posts = [];
   for (const net of nets) {
     const dueAt = nextSlot(net, taken[net] ?? new Set());
     const yt = net === 'youtube';
     const metadata = yt
       ? { youtube: { title: c.yt_title.slice(0, 100), privacy: 'public', categoryId: '1', madeForKids: false, notifySubscribers: true } }
-      : net === 'facebook' ? { facebook: { type: isLong ? 'post' : 'reel', ...(comment ? { firstComment: comment } : {}) } } : undefined;
+      : net === 'facebook' ? { facebook: { type: isLong ? 'post' : 'reel' } } : undefined;
     const input = {
       channelId: channels[net],
       text: yt ? [c.yt_description, '', copyText('tiktok', { tt_hashtags: c.yt_hashtags }).trim()].join('\n') : copyText('tiktok', c),
@@ -105,9 +105,10 @@ export async function scheduleInBuffer(pj, { mediaDir, taken }, log = () => {}) 
       assets: [{ video: { url: net === 'tiktok' ? ttVideo : video, ...(net === 'tiktok' ? { metadata: { thumbnailOffset: 0 } } : {}) } }],
       ...(metadata ? { metadata } : {}),
     };
+    // un fallo en una red no pierde las ya programadas (se guardan igual y el error queda a la vista)
     const { createPost } = await gql(`mutation($input: CreatePostInput!) { createPost(input: $input) {
-      ... on PostActionSuccess { post { id dueAt } } ... on MutationError { message } } }`, { input });
-    if (createPost.message) throw new Error(`Buffer (${net}): ${createPost.message}`);
+      ... on PostActionSuccess { post { id dueAt } } ... on MutationError { message } } }`, { input }).catch((e) => ({ createPost: { message: e.message } }));
+    if (createPost.message) { log(`⚠️ ${net}: ${createPost.message}`); posts.push({ service: net, dueAt, done: true, error: createPost.message.slice(0, 200) }); continue; }
     posts.push({ service: net, id: createPost.post.id, dueAt });
     (taken[net] ??= new Set()).add(dueAt);
     log(`📤 ${net}: programado para ${fmtSlot(dueAt)}`);
