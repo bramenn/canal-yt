@@ -10,7 +10,9 @@ import { tightenVoice } from '../../lib/editor.js';
 const KEYWORDS = 'el nombre del anime y el personaje, técnica o dato concreto que alguien buscaría: temporada, película, fecha, tráiler, personaje famoso, estudio; escrito como un titular claro y buscable, sin juegos de palabras ni nombres propios de personajes secundarios oscuros que nadie busca (si el secundario no es famoso, descríbelo por su papel junto al protagonista: «Dragon Ball: el villano que Goku mandó a la Luna» en vez de «Toninjinka»; medido: los títulos con personaje o término muy buscado como «Naruto Shippuden: cómo los clones aceleraban el entrenamiento de Naruto» o «Gachiakuta: el episodio que revela el pasado de Amo» multiplican por 4-6× las vistas y las impresiones desde búsquedas)';
 
 /** Episodios famosos que acompañan a una noticia (lib/story.js «related»), con el título de nyaa de la serie. */
-const relatedOf = (story) => (story.nyaa ? (story.related ?? []).filter((r) => r.episode > 0).slice(0, 2).map((r) => ({ anime: story.anime, nyaa: story.nyaa, ...r })) : []);
+const relatedOf = (story) => (story.nyaa ? (story.related ?? []).filter((r) => r.episode > 0).slice(0, 2)
+  // sin enlaces [wiki](url) que a veces cuela la IA: el momento se busca en los subtítulos
+  .map((r) => ({ anime: story.anime, nyaa: story.nyaa, ...r, moment: String(r.moment ?? '').replace(/\[([^\]]*)\]\([^)]*\)/g, '').trim() })) : []);
 
 /** De qué va el short, para el texto de publicación. */
 export const copyAbout = (story, script) => `Anime: ${story.anime}. Ángulo: ${story.angle}. Datos: ${story.facts}
