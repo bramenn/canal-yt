@@ -4,7 +4,7 @@
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile, stat, rm } from 'node:fs/promises';
+import { readFile, stat, rm, copyFile, mkdir, readdir } from 'node:fs/promises';
 import { run } from '../../lib/ytdlp.js';
 import { youtubeAccessToken, youtubeVideoId } from '../../lib/youtube-analytics.js';
 import { copyText } from '../../public/js/social.js';
@@ -39,11 +39,29 @@ export async function bufferChannels() {
   return out;
 }
 
-/** Sube un archivo al servidor y devuelve su enlace público (nombre con azar: no se puede adivinar). */
+// en el clúster la propia app sirve la carpeta PUBLIC_MEDIA_DIR en PUBLIC_MEDIA_URL (sin login); en el portátil, saitama por scp
+const LOCAL_DIR = process.env.PUBLIC_MEDIA_DIR;
+const LOCAL_URL = process.env.PUBLIC_MEDIA_URL;
+
+/** Deja un archivo en un enlace público y lo devuelve (nombre con azar: no se puede adivinar). */
 async function host(file, id) {
   const name = `${id}-${randomBytes(6).toString('hex')}${path.extname(file)}`;
+  if (LOCAL_DIR) {
+    await mkdir(LOCAL_DIR, { recursive: true });
+    await copyFile(file, path.join(LOCAL_DIR, name));
+    return `${LOCAL_URL}/${name}`;
+  }
   await run('scp', ['-q', '-o', 'BatchMode=yes', file, `${HOST}:${REMOTE_DIR}/${name}`], 600000);
   return `${PUBLIC_URL}/${name}`;
+}
+
+/** Borra los vídeos públicos de hace más de 10 días (ya publicados). */
+async function cleanHosted() {
+  if (!LOCAL_DIR) return run('ssh', ['-o', 'BatchMode=yes', HOST, `find ${REMOTE_DIR} -type f -name '*-*' -mtime +10 -delete`]);
+  for (const f of await readdir(LOCAL_DIR)) {
+    const full = path.join(LOCAL_DIR, f);
+    if (Date.now() - (await stat(full)).mtimeMs > 10 * 864e5) await rm(full, { force: true });
+  }
 }
 
 
@@ -95,7 +113,7 @@ export async function scheduleInBuffer(pj, { mediaDir, taken }, log = () => {}) 
     log(`📤 ${net}: programado para ${fmtSlot(dueAt)}`);
   }
   // lo ya publicado hace más de 10 días ya no hace falta en el servidor
-  await run('ssh', ['-o', 'BatchMode=yes', HOST, `find ${REMOTE_DIR} -type f -name '*-*' -mtime +10 -delete`]).catch(() => {});
+  await cleanHosted().catch(() => {});
   return posts;
 }
 

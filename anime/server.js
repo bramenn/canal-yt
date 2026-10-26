@@ -68,9 +68,11 @@ setTimeout(() => updateStats().catch((e) => console.error('cifras:', e.message))
 setInterval(() => updateStats().catch((e) => console.error('cifras:', e.message)), 30 * 60000);
 
 // Cola en disco para re-montar proyectos en segundo plano (mismo guion, voz y miniatura)
+// tareas desatendidas (Buffer, respuestas, piloto automático): solo donde AUTOPILOT=1 (el clúster), para no duplicarlas
+const AUTOPILOT = process.env.AUTOPILOT === '1';
 // publicaciones de Buffer que ya tocaban: enlace, errores y miniatura de YouTube (Buffer no sube miniaturas)
 setInterval(async () => {
-  if (!bufferReady()) return;
+  if (!AUTOPILOT || !bufferReady()) return;
   for (const pj of await listProjects(TABLE).catch(() => [])) {
     if (!pj.buffer?.posts?.some((x) => !x.done && x.dueAt <= Date.now())) continue;
     if (await checkBufferPosts(pj, MEDIA, console.log).catch((e) => { console.error('buffer:', e.message); return false; })) await saveProject(pj, null, TABLE);
@@ -79,7 +81,7 @@ setInterval(async () => {
 // respuestas automáticas a comentarios de YouTube (interruptor en la app; apagado por defecto)
 let replying = false;
 setInterval(async () => {
-  if (replying || (await getSetting(`${TABLE}.autoReply`).catch(() => false)) !== true) return;
+  if (!AUTOPILOT || replying || (await getSetting(`${TABLE}.autoReply`).catch(() => false)) !== true) return;
   replying = true;
   try {
     const list = (await listProjects(TABLE)).sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
@@ -174,15 +176,15 @@ const task = (res, run) => sse(res, (emit) => {
 });
 
 /** Hace un short y lo guarda; si falla, lo cuenta y sigue (en automático no se para todo por uno). */
-async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date.now().toString(36), learn = '', previous = null) {
+async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date.now().toString(36), learn = '', previous = null, tiktokOverride = null) {
   const v = voiceOf(voiceKey);
   emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
-  const tiktok = (await getSetting(`${TABLE}.tiktok`)) !== false; // configuración: generar o no la versión TikTok
+  const tiktok = tiktokOverride ?? (await getSetting(`${TABLE}.tiktok`)) !== false; // configuración: generar o no la versión TikTok
   const p = await makeShort({ id, story, voiceId: v.id, learn, tiktok }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal).catch(async (e) => {
     // el montaje falló con la voz ya pagada: se guarda para «🎬 Re-montar» (misma voz, sin volver a pagar ElevenLabs)
     if (!e.partial) throw e;
     e.partial.voice.title = v.title;
-    await saveProject(e.partial, user.id, TABLE);
+    await saveProject(e.partial, user?.id ?? null, TABLE);
     emit({ type: 'short', project: e.partial });
     emit({ type: 'log', text: `💾 Guardado sin vídeo: pulsa «🎬 Re-montar» en «${e.partial.script.title}» (no vuelve a pagar la voz)` });
     throw e;
@@ -190,10 +192,120 @@ async function makeAndSave(story, voiceKey, user, emit, track, signal, id = Date
   p.voice.title = v.title;
   if (previous?.stats) p.stats = previous.stats;
   if (previous?.created) p.created = previous.created;
-  await saveProject(p, user.id, TABLE);
+  await saveProject(p, user?.id ?? null, TABLE);
   emit({ type: 'short', project: p });
   return p;
 }
+
+/** Busca historias y hace `count` shorts (botón «Crear shorts de hoy» y piloto automático). tiktok: null = según la configuración. */
+async function autoShorts({ count = 3, voice, user = null, tiktok = null }, emit, track, signal) {
+  const log = (text) => emit({ type: 'log', text });
+  const allProjects = await listProjects(TABLE);
+  const avoid = allProjects.map((x) => `${x.story?.anime}: ${x.story?.angle}`);
+  // Franquicias tratadas en los últimos 8 vídeos para enfriamiento obligatorio
+  const recentFranchises = [...new Set(
+    allProjects.slice(0, 8).map((x) => franchiseOf(x.story?.anime)).filter(Boolean)
+  )];
+  log('🔎 Buscando historias de anime con gancho y variedad de franquicias…');
+  const learn = await learnFrom();
+  if (learn.includes('APRENDIZAJE DE YOUTUBE ANALYTICS') || learn.includes('CONTEXTO PÚBLICO RECIENTE')) log('🧠 Usando Analytics y las señales públicas disponibles de tus Shorts…');
+  else if (learn.includes('LO QUE NOS HA FUNCIONADO')) log('🧠 Aprendiendo de tus shorts que mejor funcionaron…');
+  const { stories, cost: c0 } = await findStories({ count: Math.min(5, Math.max(1, Number(count) || 3)), avoid, recentFranchises, learn }, emit, track);
+  log(`📰 ${stories.length} historias: ${stories.map((s) => s.anime).join(' · ')}`);
+  let cost = c0, ok = 0;
+  const made = [];
+  for (const [i, story] of stories.entries()) {
+    if (signal.aborted) break;
+    log(`━━ Short ${i + 1} de ${stories.length}: ${story.anime}`);
+    try { const pj = await makeAndSave(story, voice, user, emit, track, signal, `${Date.now().toString(36)}${i}`, learn, null, tiktok); cost += pj.cost; made.push(pj); ok++; }
+    catch (e) { log(`⚠️ ${story.anime}: ${e.message.slice(0, 200)}`); }
+  }
+  return { made: ok, cost, projects: made };
+}
+
+/** Vídeo largo nuevo (botón y piloto automático). */
+async function newLong({ topic = '', voice, user = null }, emit, track, signal) {
+  const v = voiceOf(voice);
+  emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
+  const allProjects = await listProjects(TABLE);
+  const avoid = allProjects.map((x) => `${x.story?.anime}: ${x.story?.angle}`);
+  const recentFranchises = [...new Set(
+    allProjects.slice(0, 8).map((x) => franchiseOf(x.story?.anime)).filter(Boolean)
+  )];
+  const learn = await learnFrom();
+  const started = Date.now();
+  const id = `${started.toString(36)}L`;
+  const pj = await makeLong({ id, topic, voiceId: v.id, learn, avoid, recentFranchises }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal)
+    .catch(async (e) => { throw await resumeLater(id, e, started); });
+  pj.voice.title = v.title;
+  await saveProject(pj, user?.id ?? null, TABLE);
+  emit({ type: 'short', project: pj });
+  return pj;
+}
+
+// ---- piloto automático (clúster): cada día 1 short nuevo + 2 sacados de los largos, programados para ese mismo día;
+// martes y viernes, además, un vídeo largo (se programa y se trocea en 10 shorts para los días siguientes) ----
+const AUTO_LOG = path.join(PROJECTS, 'autopilot.log');
+const autoLog = (text) => { console.log('[piloto]', text); return appendFile(AUTO_LOG, `[${new Date().toISOString()}] ${text}\n`).catch(() => {}); };
+// solo se publica lo que pasó la revisión final: sin fallo de montaje, negros ni tomas repetidas de sobra
+const publishable = (pj) => pj?.video && !pj.failed && !(pj.qa?.blacks?.length) && (pj.qa?.repeats?.length ?? 0) <= 1;
+async function toBuffer(pj) {
+  const taken = {};
+  for (const x of await listProjects(TABLE)) for (const post of x.buffer?.posts ?? []) (taken[post.service] ??= new Set()).add(post.dueAt);
+  const posts = await scheduleInBuffer(pj, { mediaDir: MEDIA, taken }, autoLog);
+  pj.buffer = { at: Date.now(), posts, auto: true };
+  await saveProject(pj, null, TABLE);
+}
+async function dailyShorts() {
+  const emit = (ev) => ev.type === 'log' && autoLog(ev.text);
+  const signal = new AbortController().signal;
+  // sin versión TikTok: dobla la voz de ElevenLabs y la de YouTube ya sirve para TikTok
+  const fresh = (await autoShorts({ count: 1, voice: 'hombre', tiktok: false }, emit, () => {}, signal)).projects ?? [];
+  const today = fresh.filter(publishable);
+  // 2 shorts de los largos aún sin programar, los más antiguos primero
+  const pool = (await listProjects(TABLE)).filter((x) => x.story?.fromLong && !x.buffer && publishable(x) && Date.now() - (x.created ?? 0) < 30 * 864e5)
+    .sort((a, b) => (a.created ?? 0) - (b.created ?? 0));
+  const picked = [];
+  for (const x of pool) if (picked.length < 2 && !picked.some((p) => p.story.fromLong === x.story.fromLong)) picked.push(x); // de largos distintos si se puede
+  for (const x of pool) if (picked.length < 2 && !picked.includes(x)) picked.push(x);
+  today.push(...picked);
+  // si no hay largos de donde sacar, se completa con shorts nuevos
+  if (today.length < 3) {
+    const more = (await autoShorts({ count: 3 - today.length, voice: 'hombre', tiktok: false }, emit, () => {}, signal)).projects ?? [];
+    today.push(...more.filter(publishable));
+  }
+  for (const pj of today) await toBuffer(pj).catch((e) => autoLog(`⚠️ Buffer «${pj.script?.title}»: ${e.message}`));
+  await autoLog(`✅ Shorts del día programados: ${today.map((x) => x.script?.title).join(' · ') || 'ninguno'}`);
+}
+async function weeklyLong() {
+  const emit = (ev) => ev.type === 'log' && autoLog(ev.text);
+  const pj = await newLong({ voice: 'hombre' }, emit, () => {}, new AbortController().signal);
+  if (publishable(pj)) await toBuffer(pj); else await autoLog(`⚠️ Largo «${pj.script?.title}» no pasó la revisión: no se publica`);
+  await shortsFromLong(pj, { tts, aligner, mediaDir: MEDIA }, { exists: async (id) => !!(await getProject(id, TABLE)), save: (x) => saveProject(x, null, TABLE) }, autoLog);
+  await autoLog(`✅ Largo listo: ${pj.script?.title}`);
+}
+let piloting = false;
+setInterval(async () => {
+  if (!AUTOPILOT || piloting || (await getSetting(`${TABLE}.autopilotOff`).catch(() => false)) === true) return;
+  const now = new Date(Date.now() - 5 * 3600e3); // hora de Colombia en campos UTC
+  if (now.getUTCHours() < 5) return; // a las 5:00 empieza: a las 12:00 sale el primero
+  const day = now.toISOString().slice(0, 10);
+  const done = (await getSetting(`${TABLE}.autopilot`).catch(() => null)) ?? {};
+  const longDay = [2, 5].includes(now.getUTCDay()); // martes y viernes
+  if (done.shorts === day && (!longDay || done.long === day)) return;
+  piloting = true;
+  try {
+    // se marca antes de empezar: si algo falla no se reintenta en bucle (y no se vuelve a pagar voz)
+    if (done.shorts !== day) {
+      await setSetting(`${TABLE}.autopilot`, { ...done, shorts: day });
+      await dailyShorts().catch((e) => autoLog(`❌ Shorts del día: ${e.message}`));
+    }
+    if (longDay && done.long !== day) {
+      await setSetting(`${TABLE}.autopilot`, { ...done, shorts: day, long: day });
+      await weeklyLong().catch((e) => autoLog(`❌ Largo: ${e.message}`));
+    }
+  } finally { piloting = false; }
+}, 10 * 60000);
 
 // sin límite de tiempo por petición: las tareas largas (vídeo completo, viñetas, miniaturas) van por SSE y pasan de 5 min
 http.createServer({ requestTimeout: 0 }, async (req, res) => {
@@ -201,6 +313,12 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
   const p = url.pathname;
   let m;
   try {
+    // vídeos para Buffer (solo en el clúster): públicos y sin login, con nombre imposible de adivinar
+    if (process.env.PUBLIC_MEDIA_DIR && (m = p.match(/^\/nt-pub\/([\w-]+\.(?:mp4|jpg))$/))) {
+      const file = path.join(process.env.PUBLIC_MEDIA_DIR, m[1]);
+      if (!existsSync(file)) { res.writeHead(404); return res.end(); }
+      return serveFrom(req, res, `/${m[1]}`, { '/': process.env.PUBLIC_MEDIA_DIR });
+    }
     const user = await gate(req, res, p, path.join(HERE, 'public'));
     if (!user) return;
 
@@ -248,51 +366,12 @@ http.createServer({ requestTimeout: 0 }, async (req, res) => {
     // ---- automático: historias del día → un short por historia ----
     if (p === '/api/auto' && req.method === 'POST') {
       const { count = 3, voice } = await readBody(req);
-      return task(res, async (emit, track, signal) => {
-        const log = (text) => emit({ type: 'log', text });
-        const allProjects = await listProjects(TABLE);
-        const avoid = allProjects.map((x) => `${x.story?.anime}: ${x.story?.angle}`);
-        // Franquicias tratadas en los últimos 8 vídeos para enfriamiento obligatorio
-        const recentFranchises = [...new Set(
-          allProjects.slice(0, 8).map((x) => franchiseOf(x.story?.anime)).filter(Boolean)
-        )];
-        log('🔎 Buscando historias de anime con gancho y variedad de franquicias…');
-        const learn = await learnFrom();
-        if (learn.includes('APRENDIZAJE DE YOUTUBE ANALYTICS') || learn.includes('CONTEXTO PÚBLICO RECIENTE')) log('🧠 Usando Analytics y las señales públicas disponibles de tus Shorts…');
-        else if (learn.includes('LO QUE NOS HA FUNCIONADO')) log('🧠 Aprendiendo de tus shorts que mejor funcionaron…');
-        const { stories, cost: c0 } = await findStories({ count: Math.min(5, Math.max(1, Number(count) || 3)), avoid, recentFranchises, learn }, emit, track);
-        log(`📰 ${stories.length} historias: ${stories.map((s) => s.anime).join(' · ')}`);
-        let cost = c0, ok = 0;
-        for (const [i, story] of stories.entries()) {
-          if (signal.aborted) break;
-          log(`━━ Short ${i + 1} de ${stories.length}: ${story.anime}`);
-          try { cost += (await makeAndSave(story, voice, user, emit, track, signal, `${Date.now().toString(36)}${i}`, learn)).cost; ok++; }
-          catch (e) { log(`⚠️ ${story.anime}: ${e.message.slice(0, 200)}`); }
-        }
-        return { made: ok, cost };
-      });
+      return task(res, (emit, track, signal) => autoShorts({ count, voice, user }, emit, track, signal));
     }
     // ---- vídeo largo horizontal 16:9 (8-10 min por capítulos) ----
     if (p === '/api/long' && req.method === 'POST') {
       const { topic = '', voice } = await readBody(req);
-      return task(res, async (emit, track, signal) => {
-        const v = voiceOf(voice);
-        emit({ type: 'log', text: `🎙 Voz: ${v.title}` });
-        const allProjects = await listProjects(TABLE);
-        const avoid = allProjects.map((x) => `${x.story?.anime}: ${x.story?.angle}`);
-        const recentFranchises = [...new Set(
-          allProjects.slice(0, 8).map((x) => franchiseOf(x.story?.anime)).filter(Boolean)
-        )];
-        const learn = await learnFrom();
-        const started = Date.now();
-        const id = `${started.toString(36)}L`;
-        const pj = await makeLong({ id, topic, voiceId: v.id, learn, avoid, recentFranchises }, { tts, aligner, mediaDir: MEDIA }, emit, track, signal)
-          .catch(async (e) => { throw await resumeLater(id, e, started); });
-        pj.voice.title = v.title;
-        await saveProject(pj, user.id, TABLE);
-        emit({ type: 'short', project: pj });
-        return { id: pj.id, duration: pj.duration, cost: pj.cost };
-      });
+      return task(res, async (emit, track, signal) => { const pj = await newLong({ topic, voice, user }, emit, track, signal); return { id: pj.id, duration: pj.duration, cost: pj.cost }; });
     }
     // ---- rehacer un short o vídeo largo (misma historia/tema, guion y montaje nuevos) ----
     if ((m = p.match(/^\/api\/remake\/([\w-]+)$/)) && req.method === 'POST') {
