@@ -288,7 +288,8 @@ let piloting = false;
 setInterval(async () => {
   if (!AUTOPILOT || piloting || (await getSetting(`${TABLE}.autopilotOff`).catch(() => false)) === true) return;
   const now = new Date(Date.now() - 5 * 3600e3); // hora de Colombia en campos UTC
-  if (now.getUTCHours() < 5) return; // a las 5:00 empieza: a las 12:00 sale el primero
+  // de 5:00 a 11:00: a las 12:00 sale el primero (fuera de esa ventana, p. ej. al desplegar de noche, espera al día siguiente)
+  if (now.getUTCHours() < 5 || now.getUTCHours() >= 11) return;
   const day = now.toISOString().slice(0, 10);
   const done = (await getSetting(`${TABLE}.autopilot`).catch(() => null)) ?? {};
   const longDay = [2, 5].includes(now.getUTCDay()); // martes y viernes
