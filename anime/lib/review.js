@@ -68,7 +68,7 @@ async function sendReview(pj, mediaDir) {
 }
 
 /** Revisa lo programado: pide revisión 6 h antes y cancela lo que llegó a 30 min sin aprobar. Devuelve los proyectos cambiados. */
-export async function reviewTick(projects, mediaDir, log = () => {}) {
+export async function reviewTick(projects, mediaDir, log = () => {}, { ahead = REVIEW_BEFORE } = {}) {
   const changed = [];
   for (const pj of projects) {
     if (!pending(pj).length || ['approved', 'rejected', 'expired'].includes(pj.review?.status)) continue;
@@ -79,7 +79,7 @@ export async function reviewTick(projects, mediaDir, log = () => {}) {
       pj.review = { ...pj.review, status: 'expired', at: Date.now() };
       changed.push(pj);
       await say(`⏰ No se publicará «${pj.script?.title}»: no llegó tu aprobación a tiempo.`, pj.review.messageId ? { reply_to_message_id: pj.review.messageId } : {}).catch(() => {});
-    } else if (!pj.review && left < REVIEW_BEFORE) {
+    } else if (!pj.review && left < ahead) { // ahead: adelantar la revisión (pruebas)
       try { await sendReview(pj, mediaDir); changed.push(pj); log(`📨 Revisión enviada: ${pj.script?.title}`); }
       catch (e) { log(`⚠️ Telegram: ${e.message}`); }
     }
