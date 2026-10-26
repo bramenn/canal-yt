@@ -39,8 +39,9 @@ const STORIES_SCHEMA = {
           anime: { type: 'string' }, angle: { type: 'string' }, facts: { type: 'string' }, sources: { type: 'array', items: { type: 'string' } },
           type: { type: 'string', enum: ['noticia', 'atemporal'] },
           nyaa: { type: 'string' }, episode: { type: 'number' }, moment: { type: 'string' },
+          related: { type: 'array', items: { type: 'object', properties: { episode: { type: 'number' }, moment: { type: 'string' } }, required: ['episode', 'moment'] } },
         },
-        required: ['anime', 'angle', 'facts', 'sources', 'type', 'nyaa', 'episode', 'moment'],
+        required: ['anime', 'angle', 'facts', 'sources', 'type', 'nyaa', 'episode', 'moment', 'related'],
       },
     },
   },
@@ -82,7 +83,8 @@ ATEMPORALES (${timeless}, "type": "atemporal"): SOLO de franquicias gigantes (On
 ${learn}
 
 Para cada una: "anime" (nombre del anime tal como se busca su tráiler en YouTube, en romaji o inglés), "angle" (el giro gracioso o sorprendente en una frase), "facts" (los datos concretos y verificados: nombres, cifras, fechas, qué pasó exactamente), "sources" (URLs) y "type" ("noticia" | "atemporal").
-Si es "atemporal" y gira en torno a un momento que se VE en un episodio del anime de TV (una pelea, una técnica, una revelación): "episode" = número de ese episodio comprobado en una wiki (One Piece y Naruto con numeración absoluta; series por temporadas, dentro de la temporada), "nyaa" = título en rōmaji como lo nombran los fansubs en nyaa.si, con la temporada si hace falta («Kimetsu no Yaiba», «Naruto Shippuuden», «Shingeki no Kyojin S3»), y "moment" = qué pasa en pantalla, en inglés con los nombres de los subtítulos en inglés. Si no (noticias, o temas que no son un momento de un episodio): "episode" = 0 y "nyaa" y "moment" vacíos.`,
+Si es "atemporal": gira en torno a un momento que se VE en un episodio del anime de TV: "episode" = número de ese episodio comprobado en una wiki (One Piece y Naruto con numeración absoluta; series por temporadas, dentro de la temporada), "nyaa" = título en rōmaji como lo nombran los fansubs en nyaa.si, con la temporada si hace falta («Kimetsu no Yaiba», «Naruto Shippuuden», «Shingeki no Kyojin S3»), "moment" = qué pasa en pantalla, en inglés con los nombres de los subtítulos en inglés, y "related" = [].
+Si es "noticia": "episode" = 0 y "moment" vacío, pero si la franquicia tiene anime de TV, "nyaa" = su título en rōmaji como arriba y "related" = 2 episodios FAMOSOS de esa serie (comprobados en una wiki) con un momento icónico cada uno que encaje con la noticia: los personajes, el arco o la obra de los que habla (p. ej. si la noticia es sobre el final de Bleach, la última batalla de Ichigo o su primer episodio). Cada uno: { "episode", "moment" (qué pasa en pantalla, en inglés) }. Sus escenas acompañan a las imágenes de la noticia, que siguen mostrando lo que se cuenta. Sin anime de TV: "nyaa" vacío y "related" = [].`,
     schema: STORIES_SCHEMA, system: 'Eres guionista de un canal de shorts de anime en español. Verificas los datos antes de contarlos.',
     effort: 'medium', tools: ['WebSearch', 'WebFetch'],
   }, emit, track);

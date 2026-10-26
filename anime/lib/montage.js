@@ -397,7 +397,7 @@ export async function renderCut(c, item, uses, out) {
  * script: { lines: [{ text, show, query, visual }], scene_query, yellow, red }, voice: mp3, words: [{ w, s, e }] (alineadas);
  * context: de qué va (historia y personajes). Devuelve { video, thumb }.
  */
-export async function montage({ script, voice, words, duration, dir, name = 'short', thumb = null, context = '', sources: news = [], episode = null }, log, signal) {
+export async function montage({ script, voice, words, duration, dir, name = 'short', thumb = null, context = '', sources: news = [], episode = null, related = [] }, log, signal) {
   await mkdir(dir, { recursive: true });
   const total = duration + 0.3;
   const lines = lineTimes(script.lines, words, total);
@@ -408,7 +408,16 @@ export async function montage({ script, voice, words, duration, dir, name = 'sho
   const ep = episode?.episode > 0 ? await episodeScenes(episode, dir, log, context, '90-160')
     .catch((e) => { log(`⚠️ Sin episodio (${e.message.slice(0, 120)}): uso tráileres`); return null; }) : null;
   ep?.scenes.forEach((x) => catalog.push({ ...x, kind: 'video', anime: episode.anime, id: `V${catalog.length + 1}` }));
-  const enough = (ep?.scenes.length ?? 0) >= 12;
+  // noticias: momentos icónicos de episodios famosos de la serie que encajan con lo que se cuenta (nunca tráileres de YouTube);
+  // acompañan a las imágenes de la noticia, que siguen mostrando de qué se habla
+  let relatedScenes = 0;
+  for (const r of related) {
+    if (signal?.aborted) throw new Error('Cancelado');
+    const rel = await episodeScenes(r, dir, log, context, '60-120').catch((e) => { log(`⚠️ Episodio ${r.episode} de ${r.anime}: ${e.message.slice(0, 120)}`); return null; });
+    rel?.scenes.forEach((x) => catalog.push({ ...x, kind: 'video', anime: r.anime, desc: `escena relacionada (ep. ${r.episode}, ${r.moment}): ${x.desc ?? ''}`, id: `V${catalog.length + 1}` }));
+    relatedScenes += rel?.scenes.length ?? 0;
+  }
+  const enough = (ep?.scenes.length ?? 0) + relatedScenes >= 12;
   const animes = enough ? [] : [...new Set(script.lines.filter((l) => l.show === 'anime').map((l) => l.query))];
   // un guion solo con «video»/«imagen» se quedaba sin material si esas búsquedas fallaban: el tráiler de la franquicia es la base
   if (!enough && !animes.length && script.franchise?.trim()) animes.push(script.franchise.trim());

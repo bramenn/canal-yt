@@ -9,6 +9,9 @@ import { tightenVoice } from '../../lib/editor.js';
 
 const KEYWORDS = 'el nombre del anime y el personaje, técnica o dato concreto que alguien buscaría: temporada, película, fecha, tráiler, personaje famoso, estudio; escrito como un titular claro y buscable, sin juegos de palabras ni nombres propios de personajes secundarios oscuros que nadie busca (si el secundario no es famoso, descríbelo por su papel junto al protagonista: «Dragon Ball: el villano que Goku mandó a la Luna» en vez de «Toninjinka»; medido: los títulos con personaje o término muy buscado como «Naruto Shippuden: cómo los clones aceleraban el entrenamiento de Naruto» o «Gachiakuta: el episodio que revela el pasado de Amo» multiplican por 4-6× las vistas y las impresiones desde búsquedas)';
 
+/** Episodios famosos que acompañan a una noticia (lib/story.js «related»), con el título de nyaa de la serie. */
+const relatedOf = (story) => (story.nyaa ? (story.related ?? []).filter((r) => r.episode > 0).slice(0, 2).map((r) => ({ anime: story.anime, nyaa: story.nyaa, ...r })) : []);
+
 /** De qué va el short, para el texto de publicación. */
 export const copyAbout = (story, script) => `Anime: ${story.anime}. Ángulo: ${story.angle}. Datos: ${story.facts}
 Título en pantalla: «${script.title}». Guion: ${script.lines.map((l) => l.text).join(' ')}`;
@@ -28,7 +31,7 @@ async function produce({ id, story, script, voiceId, name, thumb }, { tts, align
   // sin las pausas largas tras cada punto: ritmo de ~2,9 palabras/s, como los canales grandes
   const { file: voice, words, duration } = await tightenVoice(file, raw, al.duration ?? raw.at(-1).e);
   log(`🎬 Montando la versión ${name === 'short' ? 'YouTube' : 'TikTok'} (${Math.round(duration)} s)…`);
-  const job = { script, voice, words, duration, dir: path.join(mediaDir, id), name, thumb, context, sources: story.sources, episode: story.episode > 0 ? story : null };
+  const job = { script, voice, words, duration, dir: path.join(mediaDir, id), name, thumb, context, sources: story.sources, episode: story.episode > 0 ? story : null, related: relatedOf(story) };
   // la voz ya está pagada: un fallo pasajero (red, cuota de la IA) se reintenta una vez; si vuelve a fallar, el error lleva
   // la voz para guardar el short y re-montarlo sin pagar ElevenLabs otra vez
   const out = await montage(job, log, signal).catch((e) => {
@@ -102,7 +105,7 @@ export async function remountProject(pj, { tts, aligner, mediaDir }, log = () =>
     if (!raw.length) throw new Error(`Sin palabras alineadas para ${pj.id} (${name})`);
     const { file: voice, words, duration } = await tightenVoice(file, raw, al.duration ?? raw.at(-1).e);
     log(`🎬 Re-montando ${pj.id} (${name}, ${Math.round(duration)} s) con encuadre inteligente y Cinema Card…`);
-    const out = await montage({ script, voice, words, duration, dir, name, thumb, context, sources: pj.story.sources, episode: pj.story.episode > 0 ? pj.story : null }, log, signal);
+    const out = await montage({ script, voice, words, duration, dir, name, thumb, context, sources: pj.story.sources, episode: pj.story.episode > 0 ? pj.story : null, related: relatedOf(pj.story) }, log, signal);
     if (name === 'short') pj.qa = out.qa;
     return Math.round(duration);
   };
