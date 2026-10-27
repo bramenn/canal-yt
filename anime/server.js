@@ -287,29 +287,38 @@ async function toBuffer(pj) {
   pj.buffer = { at: Date.now(), posts, auto: true };
   await saveProject(pj, null, TABLE);
 }
+const DAILY = 3; // shorts al día en YouTube
+const colDay = (t) => new Date(t - 5 * 3600e3).toISOString().slice(0, 10); // día en Colombia
 async function dailyShorts() {
   const emit = (ev) => ev.type === 'log' && autoLog(ev.text);
   const signal = new AbortController().signal;
-  // sin versión TikTok: dobla la voz de ElevenLabs y la de YouTube ya sirve para TikTok
-  const fresh = (await autoShorts({ count: 1, voice: 'hombre', tiktok: false }, emit, () => {}, signal)).projects ?? [];
-  const today = fresh.filter(publishable);
-  // 2 shorts de los largos aún sin programar, los más antiguos primero
-  const pool = (await listProjects(TABLE)).filter((x) => x.story?.fromLong && !x.buffer && publishable(x) && Date.now() - (x.created ?? 0) < 30 * 864e5)
+  // solo llena los huecos: lo ya programado para hoy en YouTube (no cancelado) cuenta
+  const all = await listProjects(TABLE);
+  const booked = all.filter((x) => x.kind !== 'long' && x.buffer?.posts?.some((p) => p.service === 'youtube' && !p.error && colDay(p.dueAt) === colDay(Date.now()))).length;
+  const need = DAILY - booked;
+  if (need <= 0) return autoLog(`✅ Hoy ya hay ${booked} shorts programados: no hace falta ninguno`);
+  // 1 nuevo (la noticia del día) y el resto de los largos aún sin programar, los más antiguos primero
+  const pool = all.filter((x) => x.story?.fromLong && !x.buffer && publishable(x) && Date.now() - (x.created ?? 0) < 30 * 864e5)
     .sort((a, b) => (a.created ?? 0) - (b.created ?? 0));
   const picked = [];
-  for (const x of pool) if (picked.length < 2 && !picked.some((p) => p.story.fromLong === x.story.fromLong)) picked.push(x); // de largos distintos si se puede
-  for (const x of pool) if (picked.length < 2 && !picked.includes(x)) picked.push(x);
-  today.push(...picked);
-  // si no hay largos de donde sacar, se completa con shorts nuevos
-  if (today.length < 3) {
-    const more = (await autoShorts({ count: 3 - today.length, voice: 'hombre', tiktok: false }, emit, () => {}, signal)).projects ?? [];
-    today.push(...more.filter(publishable));
-  }
+  for (const x of pool) if (picked.length < need - 1 && !picked.some((p) => p.story.fromLong === x.story.fromLong)) picked.push(x); // de largos distintos si se puede
+  for (const x of pool) if (picked.length < need - 1 && !picked.includes(x)) picked.push(x);
+  // sin versión TikTok: dobla la voz de ElevenLabs y la de YouTube ya sirve para TikTok; si no hay largos de donde sacar, más nuevos
+  const fresh = (await autoShorts({ count: need - picked.length, voice: 'hombre', tiktok: false }, emit, () => {}, signal)).projects ?? [];
+  const today = [...fresh.filter(publishable), ...picked];
   for (const pj of today) await toBuffer(pj).catch((e) => autoLog(`⚠️ Buffer «${pj.script?.title}»: ${e.message}`));
   await autoLog(`✅ Shorts del día programados: ${today.map((x) => x.script?.title).join(' · ') || 'ninguno'}`);
 }
+const LONG_CHARS = 10000; // voz de un Top 10 (~10 min) con margen
 async function weeklyLong() {
   const emit = (ev) => ev.type === 'log' && autoLog(ev.text);
+  // sin voz suficiente no se empieza: un largo a medias gasta voz y no se publica
+  const u = await import('../lib/tts/elevenlabs.js').then((m) => m.usage()).catch(() => null);
+  if (u && u.limit - u.used < LONG_CHARS) {
+    const msg = `⏸ Hoy tocaba vídeo largo, pero quedan ${u.limit - u.used} caracteres de voz en ElevenLabs (hacen falta ~${LONG_CHARS}). Sube de plan y lo hago el próximo martes o viernes.`;
+    await autoLog(msg); await notify(msg);
+    return;
+  }
   const pj = await newLong({ voice: 'hombre' }, emit, () => {}, new AbortController().signal);
   if (publishable(pj)) await toBuffer(pj); else await autoLog(`⚠️ Largo «${pj.script?.title}» no pasó la revisión: no se publica`);
   await shortsFromLong(pj, { tts, aligner, mediaDir: MEDIA }, { exists: async (id) => !!(await getProject(id, TABLE)), save: (x) => saveProject(x, null, TABLE) }, autoLog);
