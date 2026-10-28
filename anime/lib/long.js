@@ -20,7 +20,9 @@ import { makeThumb16x9 } from './thumb.js';
 import { episodeScenes } from './episodes.js';
 
 const LW = 1920, LH = 1080, FPS = 30, CARD_DUR = 2.0;
-const ff = (args, timeout = 900000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], timeout);
+// sin capítulos ni pistas de datos: los .mkv traen capítulos que en .mp4 son una pista de texto, y piezas con y sin
+// ella rompen el concat final (se quedaba en el primer corte)
+const ff = (args, timeout = 900000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args.slice(0, -1), '-map_chapters', '-1', '-dn', args.at(-1)], timeout);
 const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9ñ]/g, '');
 const clamp = (v, lo, hi, def) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def);
 const fmtChapterTime = (sec) => {

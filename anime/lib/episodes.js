@@ -11,7 +11,9 @@ import { scenesOf, catalogScenes } from './montage.js';
 const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
 const pad = (n) => String(n).padStart(2, '0');
 const PY = process.env.ALIGN_PYTHON || path.resolve(import.meta.dirname, '../../.tools/venv/bin/python');
-const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], timeout);
+// sin capítulos ni pistas de datos: los .mkv traen capítulos que en .mp4 son una pista de texto, y piezas con y sin
+// ella rompen el concat final (se quedaba en el primer corte)
+const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args.slice(0, -1), '-map_chapters', '-1', '-dn', args.at(-1)], timeout);
 const TRUSTED = /SubsPlease|Erai-raws|EMBER|Judas|ASW|Yameii|ToonsHub|DKB|neoDESU/i;
 
 const TRACKERS = ['http://tracker.opentrackr.org:1337/announce', 'udp://tracker.opentrackr.org:1337/announce', 'udp://open.stealth.si:80/announce',

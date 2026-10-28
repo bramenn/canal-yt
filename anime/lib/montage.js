@@ -27,7 +27,9 @@ const REACTION = /react|reacci|reaccion|analysis|análisis|analisis|explained|re
 const GAME = /gameplay|walkthrough|\bstorm\s*\d|ultimate ninja|\bps[45]\b|xbox|\bpc\b.*\bgame\b|video ?game|videojuego/i;
 // Canales oficiales con metraje en máxima resolución y sin marcas de agua de terceros
 const OFFICIAL_CHANNELS = /crunchyroll|viz|toho\s*animation|tms|aniplex|muse\s*asia|ani-one|bandai\s*namco|tv\s*tokyo|netflix|warner\s*bros|kadokawa|shueisha|toei/i;
-const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args], timeout);
+// sin capítulos ni pistas de datos: los .mkv traen capítulos que en .mp4 son una pista de texto, y piezas con y sin
+// ella rompen el concat final (se quedaba en el primer corte)
+const ff = (args, timeout = 600000) => run('ffmpeg', ['-nostdin', '-v', 'error', '-y', ...args.slice(0, -1), '-map_chapters', '-1', '-dn', args.at(-1)], timeout);
 const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ]/g, '');
 
 const clamp = (v, lo, hi, def) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def);
