@@ -20,6 +20,11 @@ const TRACKERS = ['http://tracker.opentrackr.org:1337/announce', 'udp://tracker.
 const RANGE = /(?<!(?:part|season|cour|\bs)\s*)(?<!\d)(\d{1,4})\s*[-~]\s*(\d{1,4})/i;
 const epRe = (ep) => new RegExp(`(?:\\s-\\s|\\bE|\\bEp\\.?\\s?|#|\\s)0*${ep}(?:v\\d)?(?=[\\s\\]\\[(._-]|$)`, 'i');
 
+// temporada que trae el nombre de nyaa («Shingeki no Kyojin S3», «… Season 2», «… 2nd Season»); 0 = sin temporada
+const SEASON = /\s*(?:\bS(\d{1,2})|\bSeason\s*(\d{1,2})|\b(\d{1,2})(?:st|nd|rd|th)\s+Season)\s*$/i;
+export const seasonOf = (name) => +(String(name).match(SEASON)?.slice(1).find(Boolean) ?? 0);
+const baseName = (name) => String(name).replace(SEASON, '').trim();
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Pausa (sin fallar) mientras no haya red o queden menos de minGB libres: el trabajo sigue solo cuando se arregla. */
@@ -46,8 +51,9 @@ async function rss(q) {
   })).filter((x) => x.link && x.seeders > 0);
 }
 
-/** El mejor torrent con ese episodio: suelto si existe; si no, un pack que lo incluya (se baja solo ese archivo). */
-export async function findTorrent(name, ep) {
+/** El mejor torrent con ese episodio: suelto si existe; si no, un pack que lo incluya (se baja solo ese archivo).
+ * packsOnly: buscando por el nombre sin temporada, un episodio suelto sería el de la temporada 1. */
+export async function findTorrent(name, ep, { packsOnly = false } = {}) {
   const one = epRe(ep);
   const score = (x) => x.seeders * (/1080p/i.test(x.title) ? 3 : /720p/i.test(x.title) ? 1.5 : 1) * (TRUSTED.test(x.title) ? 2 : 1);
   for (const q of [`${name} ${pad(ep)} 1080p`, `${name} ${pad(ep)}`, `${name} batch`, `${name} complete`]) {
@@ -62,7 +68,7 @@ export async function findTorrent(name, ep) {
       return r ? +r[1] <= ep && ep <= +r[2] && !/\b(19|20)\d\d\b/.test(r[0]) : /batch|complete/i.test(x.title);
     });
     const best = (arr) => arr.sort((a, b) => score(b) - score(a))[0];
-    if (single.length) return { ...best(single), pack: false };
+    if (single.length && !packsOnly) return { ...best(single), pack: false };
     if (packs.length) return { ...best(packs), pack: true };
   }
   return null;
@@ -77,7 +83,7 @@ async function videosIn(dir) {
 }
 
 /** Baja solo el archivo del episodio. Deja de compartir al terminar (--seed-time=0) y limita la subida mientras baja. */
-async function download(t, ep, dl, log) {
+async function download(t, ep, dl, log, season = 0) {
   await mkdir(dl, { recursive: true });
   const tfile = path.join(dl, 'ep.torrent');
   if (!existsSync(tfile)) await writeFile(tfile, Buffer.from(await (await fetch(t.link, { headers: { 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(30000) })).arrayBuffer()));
@@ -89,9 +95,10 @@ async function download(t, ep, dl, log) {
   if (t.pack) {
     // «  12|./Naruto/Naruto - 045 [...].mkv»
     const list = await run('aria2c', ['-S', tfile]);
-    const files = [...list.matchAll(/^\s*(\d+)\|(.+)$/gm)].map((m) => ({ idx: m[1], name: path.basename(m[2].trim()) }));
-    const hit = files.find((f) => /\.(mkv|mp4)$/i.test(f.name) && epRe(ep).test(f.name.replace(/\.(mkv|mp4)$/i, ' ')));
-    if (!hit) throw new Error(`el pack no trae el episodio ${ep}`);
+    const files = [...list.matchAll(/^\s*(\d+)\|(.+)$/gm)].map((m) => ({ idx: m[1], path: m[2].trim(), name: path.basename(m[2].trim()) }))
+      .filter((f) => /\.(mkv|mp4)$/i.test(f.name));
+    const hit = packFile(files, ep, season);
+    if (!hit) throw new Error(`el pack no trae el episodio ${ep}${season ? ` de la temporada ${season}` : ''}`);
     args.push(`--select-file=${hit.idx}`);
     want = hit.name;
   }
@@ -108,6 +115,14 @@ async function download(t, ep, dl, log) {
   const v = (await videosIn(dl)).find((x) => !want || path.basename(x.file) === want);
   if (!v) throw new Error('el torrent no dejó ningún vídeo');
   return v.file;
+}
+
+/** Archivo del episodio dentro de un pack. Con varias temporadas, el de la pedida (sin temporada: la 1); si no está, ninguno. */
+export function packFile(files, ep, season = 0) {
+  const sxe = (f) => f.name.match(/\bS(\d{1,2})\s?E(\d{1,4})\b/i);
+  if (files.some(sxe)) return files.find((f) => { const m = sxe(f); return +m?.[1] === (season || 1) && +m[2] === ep; });
+  const inSeason = (f) => season <= 1 || new RegExp(`\\b(?:Season\\s*|S)0*${season}\\b`, 'i').test(f.path);
+  return files.find((f) => inSeason(f) && epRe(ep).test(f.name.replace(/\.(mkv|mp4)$/i, ' ')));
 }
 
 /** Subtítulos en inglés del mkv como [{ s, e, text }]. */
@@ -187,11 +202,19 @@ async function scenesFor(entry, dir, log, context = '', span = '200-320') {
   const slug = `ep-${norm(entry.nyaa || entry.anime).slice(0, 30)}-${ep}`;
   const cache = path.join(dir, `${slug}.json`);
   if (existsSync(cache)) return JSON.parse(await readFile(cache, 'utf8'));
-  const t = await findTorrent(entry.nyaa || entry.anime, ep) ?? (entry.nyaa && await findTorrent(entry.anime, ep));
-  if (!t) throw new Error(`no está en nyaa (${entry.nyaa || entry.anime} ${ep})`);
+  const name = entry.nyaa || entry.anime, season = seasonOf(name);
+  // sin releases con ese nombre: el nombre general (sin temporada) o el de la serie; desde la temporada 2, solo packs
+  // un release con la temporada en el nombre ya es de esa temporada; en un pack general hay que buscarla dentro
+  let t = await findTorrent(name, ep), packSeason = 0;
+  for (const alt of [...new Set([baseName(name), entry.anime])].filter((x) => x && x !== name)) {
+    if (t) break;
+    t = await findTorrent(alt, ep, { packsOnly: season > 1 });
+    packSeason = season;
+  }
+  if (!t) throw new Error(`no está en nyaa (${name} ${ep})`);
   const dl = path.join(dir, `${slug}-dl`);
   let file;
-  try { file = await download(t, ep, dl, log); } catch (e) { throw new Error(`descarga a medias, se retoma al reanudar: ${e.message}`); }
+  try { file = await download(t, ep, dl, log, packSeason); } catch (e) { throw new Error(`descarga a medias, se retoma al reanudar: ${e.message}`); }
   try {
     const dur = +(await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file])).trim();
     let subs = await subtitles(file, dl).catch(() => []);
