@@ -16,6 +16,8 @@ const TRUSTED = /SubsPlease|Erai-raws|EMBER|Judas|ASW|Yameii|ToonsHub|DKB|neoDES
 
 const TRACKERS = ['http://tracker.opentrackr.org:1337/announce', 'udp://tracker.opentrackr.org:1337/announce', 'udp://open.stealth.si:80/announce',
   'udp://exodus.desync.com:6969/announce', 'udp://tracker.torrent.eu.org:451/announce', 'http://open.tracker.cl:1337/announce'].join(',');
+// rango de un pack («01-75», «1 ~ 25»); «Part 2 - 05» o «Season 2 - 05» son un episodio suelto, no un rango
+const RANGE = /(?<!(?:part|season|cour|\bs)\s*)(?<!\d)(\d{1,4})\s*[-~]\s*(\d{1,4})/i;
 const epRe = (ep) => new RegExp(`(?:\\s-\\s|\\bE|\\bEp\\.?\\s?|#|\\s)0*${ep}(?:v\\d)?(?=[\\s\\]\\[(._-]|$)`, 'i');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -53,10 +55,10 @@ export async function findTorrent(name, ep) {
     // «[Grupo] Nombre - 24 (1080p)»: el nombre seguido del número, para no confundir Naruto con Boruto - Naruto… ni una temporada con otra
     const bare = (x) => norm(x.title.replace(/^(\[[^\]]*\]\s*)+/, ''));
     const fit = items.filter((x) => bare(x).startsWith(norm(name)));
-    const single = fit.filter((x) => one.test(x.title) && !/\d+\s*[-~]\s*\d+|batch|complete/i.test(x.title)
+    const single = fit.filter((x) => one.test(x.title) && !RANGE.test(x.title) && !/batch|complete/i.test(x.title)
       && [String(ep), pad(ep), String(ep).padStart(3, '0')].some((n) => bare(x).startsWith(norm(name) + n)));
     const packs = fit.filter((x) => {
-      const r = x.title.match(/(\d{1,4})\s*[-~]\s*(\d{1,4})/);
+      const r = x.title.match(RANGE);
       return r ? +r[1] <= ep && ep <= +r[2] && !/\b(19|20)\d\d\b/.test(r[0]) : /batch|complete/i.test(x.title);
     });
     const best = (arr) => arr.sort((a, b) => score(b) - score(a))[0];
