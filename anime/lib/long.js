@@ -611,9 +611,10 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
     ...audioInputs,
     '-filter_complex', `[0:v]subtitles=${assFile}:fontsdir=${FONTS}[o];${audioMix}`,
     '-map', '[o]', '-map', '[a]',
-    '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p',
+    // veryfast: los cortes ya vienen a crf 20 y en el clúster (4 vCPU compartidos) «medium» pasaba de 30 min en 11 min de vídeo
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '192k', '-t', String(total), '-movflags', '+faststart', final,
-  ], 1800000);
+  ], 7200000);
   // una marca de tiempo rota en un segmento congela la imagen mientras la voz sigue: no se entrega así
   const vDur = parseFloat(await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration', '-of', 'csv=p=0', final]));
   if (!(vDur > total - 1)) throw new Error(`La imagen dura ${vDur.toFixed(1)} s y la voz ${total.toFixed(1)} s: montaje desincronizado`);
