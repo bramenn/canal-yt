@@ -624,8 +624,10 @@ export async function montageLong({ plan, blocks, dir, thumb = null }, log, sign
   const introEnd = chaptersTimeline[1]?.start ?? 0;
   // las tarjetas «PUESTO #n» son oscuras y casi iguales entre sí: ni negro ni repetición
   const onCard = (t) => cardRanges.some(([s, e]) => t >= s - 0.5 && t <= e + 0.5);
+  // los destellos de transición son fotogramas casi blancos: entre sí parecen la misma toma
+  const onFlash = (t) => allFlash.some((f) => Math.abs(t - f) <= 0.75);
   if (qa) {
-    qa.repeats = qa.repeats.filter(([a, b]) => a >= introEnd && !onCard(a) && !onCard(b));
+    qa.repeats = qa.repeats.filter(([a, b]) => a >= introEnd && !onCard(a) && !onCard(b) && !onFlash(a) && !onFlash(b));
     qa.blacks = qa.blacks.filter(([s]) => !onCard(s));
     log(fmtQa(qa));
   }
