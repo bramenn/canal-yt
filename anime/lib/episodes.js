@@ -158,13 +158,29 @@ export async function subtitles(file, dir) {
   const eng = text.filter((s) => /^en/i.test(s.tags?.language ?? '') || !s.tags?.language);
   const t = (x) => { const [h, m, s] = x.replace(',', '.').split(':'); return +h * 3600 + +m * 60 + +s; };
   const read = async (st) => {
-    const srt = path.join(dir, `ep-${st.index}.srt`);
-    await ff(['-i', file, '-map', `0:${st.index}`, '-c:s', 'srt', srt]);
+    let cues;
+    if (/ass|ssa/i.test(st.codec_name ?? '')) {
+      // ASS tal cual: los carteles animados y el karaoke del opening van fotograma a fotograma (decenas de miles de
+      // líneas que llenaban el texto para la IA antes del diálogo); se reconocen por sus marcas de posición o de sílaba
+      const ass = path.join(dir, `ep-${st.index}.ass`);
+      await ff(['-i', file, '-map', `0:${st.index}`, '-c:s', 'copy', ass]);
+      const typeset = /\\(pos|move|org|i?clip)\(|\\p[1-9]|\\[kK][fo]?\d|\\t\(/;
+      cues = (await readFile(ass, 'utf8')).split(/\r?\n/).filter((l) => l.startsWith('Dialogue:')).map((l) => {
+        const f = l.slice(9).split(',');
+        const text = f.slice(9).join(',');
+        return !f[8]?.trim() && !typeset.test(text) && { s: t(f[1].trim()), e: t(f[2].trim()), text: text.replace(/\{[^}]*\}/g, '').replace(/\\[Nnh]/g, ' ') };
+      });
+    } else {
+      const srt = path.join(dir, `ep-${st.index}.srt`);
+      await ff(['-i', file, '-map', `0:${st.index}`, '-c:s', 'srt', srt]);
+      cues = (await readFile(srt, 'utf8')).split(/\r?\n\r?\n/).map((b) => {
+        const m = b.match(/(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)\s*\n([\s\S]+)/);
+        return m && { s: t(m[1]), e: t(m[2]), text: m[3].replace(/<[^>]+>|\{[^}]+\}/g, '') };
+      });
+    }
     const seen = new Set();
-    return (await readFile(srt, 'utf8')).split(/\r?\n\r?\n/).map((b) => {
-      const m = b.match(/(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)\s*\n([\s\S]+)/);
-      return m && { s: t(m[1]), e: t(m[2]), text: m[3].replace(/<[^>]+>|\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim() };
-    }).filter((x) => x && x.text.length > 1 && !seen.has(`${Math.round(x.s)}${x.text}`) && seen.add(`${Math.round(x.s)}${x.text}`))
+    return cues.filter(Boolean).map((x) => ({ ...x, text: x.text.replace(/\s+/g, ' ').trim() }))
+      .filter((x) => x.text.length > 1 && !seen.has(`${Math.round(x.s)}${x.text}`) && seen.add(`${Math.round(x.s)}${x.text}`))
       .sort((a, b) => a.s - b.s);
   };
   // la pista con más líneas es la de diálogos: las de carteles, letras del opening o «forced» traen unas pocas
