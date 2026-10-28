@@ -151,20 +151,29 @@ export function packFile(files, ep, season = 0) {
 }
 
 /** Subtítulos en inglés del mkv como [{ s, e, text }]. */
-async function subtitles(file, dir) {
-  const streams = JSON.parse(await run('ffprobe', ['-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index:stream_tags=language,title', '-of', 'json', file])).streams ?? [];
-  const eng = streams.filter((s) => /^en/i.test(s.tags?.language ?? '') || !s.tags?.language);
-  const pick = eng.find((s) => !/sign|song/i.test(s.tags?.title ?? '')) ?? eng[0] ?? streams[0];
-  if (!pick) return [];
-  const srt = path.join(dir, 'ep.srt');
-  await ff(['-i', file, '-map', `0:${pick.index}`, '-c:s', 'srt', srt]);
+export async function subtitles(file, dir) {
+  const streams = JSON.parse(await run('ffprobe', ['-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index,codec_name:stream_tags=language,title', '-of', 'json', file])).streams ?? [];
+  // los PGS (imagen) no se pueden leer como texto
+  const text = streams.filter((s) => !/pgs|dvd_sub|dvb/i.test(s.codec_name ?? ''));
+  const eng = text.filter((s) => /^en/i.test(s.tags?.language ?? '') || !s.tags?.language);
   const t = (x) => { const [h, m, s] = x.replace(',', '.').split(':'); return +h * 3600 + +m * 60 + +s; };
-  const seen = new Set();
-  return (await readFile(srt, 'utf8')).split(/\r?\n\r?\n/).map((b) => {
-    const m = b.match(/(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)\s*\n([\s\S]+)/);
-    return m && { s: t(m[1]), e: t(m[2]), text: m[3].replace(/<[^>]+>|\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim() };
-  }).filter((x) => x && x.text.length > 1 && !seen.has(`${Math.round(x.s)}${x.text}`) && seen.add(`${Math.round(x.s)}${x.text}`))
-    .sort((a, b) => a.s - b.s);
+  const read = async (st) => {
+    const srt = path.join(dir, `ep-${st.index}.srt`);
+    await ff(['-i', file, '-map', `0:${st.index}`, '-c:s', 'srt', srt]);
+    const seen = new Set();
+    return (await readFile(srt, 'utf8')).split(/\r?\n\r?\n/).map((b) => {
+      const m = b.match(/(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)\s*\n([\s\S]+)/);
+      return m && { s: t(m[1]), e: t(m[2]), text: m[3].replace(/<[^>]+>|\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim() };
+    }).filter((x) => x && x.text.length > 1 && !seen.has(`${Math.round(x.s)}${x.text}`) && seen.add(`${Math.round(x.s)}${x.text}`))
+      .sort((a, b) => a.s - b.s);
+  };
+  // la pista con más líneas es la de diálogos: las de carteles, letras del opening o «forced» traen unas pocas
+  let best = [];
+  for (const st of (eng.length ? eng : text).slice(0, 6)) {
+    const subs = await read(st).catch(() => []);
+    if (subs.length > best.length) best = subs;
+  }
+  return best;
 }
 
 /** Subtítulos en imagen (PGS de los Blu-ray) no se leen como texto: Whisper traduce el audio japonés con sus tiempos. */
