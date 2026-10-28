@@ -154,7 +154,13 @@ REGLAS DE ESTILO Y RITMO:
   return { block: ev.data, cost: ev.cost ?? 0 };
 }
 
-export async function writeChapterScript(ch, plan, { isLast = false, minWords = 135, maxWords = 160, screen = null } = {}, emit, track) {
+// el guion es lo que dirá la voz: si la IA contesta al editor en vez de narrar, no vale
+const META = /\b(proporcionad[oa]s?|env[ií]a(me)?|necesito (el|los|la|que)|pendiente de|no contiene (la|el) (escena|momento|descubrimiento)|sin ese material|tramos? (con tiempos|correctos|recortados)|selecci[oó]n visual|no puedo (escribir|narrar))\b/i;
+
+export async function writeChapterScript(ch, plan, opts = {}, emit, track) {
+  const { isLast = false, minWords = 135, maxWords = 160 } = opts;
+  // sin escenas útiles (episodio equivocado o momento ilocalizable) los «tramos» son la queja de la IA: no se pasan
+  const screen = opts.screen?.scenes?.length ? opts.screen : null;
   const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
   // tramos del episodio ya recortados (cachés antiguas: el «qué pasa» va al inicio de cada descripción)
   const tramos = screen?.windows?.map((w) => `- ${mmss(w.s)}-${mmss(w.e)}: ${w.what}`)
@@ -193,6 +199,11 @@ VISUALES EN 16:9 ("lines"):
     effort: 'low',
     tools: [],
   }, emit, track);
+  if (ev.data?.lines?.some((l) => META.test(l.text ?? ''))) {
+    // una vez más sin el material del episodio (narrado desde el plan); si vuelve a salir así, no se pone voz
+    if (screen) return writeChapterScript(ch, plan, { ...opts, screen: null }, emit, track);
+    throw new Error(`el guion del #${ch.number} salió con comentarios de la IA en vez de narración`);
+  }
   return { block: ev.data, cost: ev.cost ?? 0 };
 }
 
