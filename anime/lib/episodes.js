@@ -250,9 +250,9 @@ async function scenesFor(entry, dir, log, context = '', span = '200-320') {
   try {
     const dur = +(await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file])).trim();
     let subs = await subtitles(file, dl).catch(() => []);
-    // los BD traen el diálogo en imagen (PGS) y en texto solo las canciones: si el texto no cubre el episodio, Whisper
-    const covers = subs.length ? subs.at(-1).e - subs[0].s : 0;
-    if (subs.length < 20 || covers < dur * 0.4) subs = await whisperSubs(file, dl, log).catch((e) => { log(`⚠️ Whisper: ${e.message.slice(0, 120)}`); return []; });
+    // los BD traen el diálogo en imagen (PGS) y en texto solo opening y ending: un diálogo tiene una línea cada pocos
+    // segundos y las canciones unas decenas en todo el episodio; con menos de una cada 15 s, Whisper
+    if (subs.length < Math.max(20, dur / 15)) subs = await whisperSubs(file, dl, log).catch((e) => { log(`⚠️ Whisper: ${e.message.slice(0, 120)}`); return []; });
     if (subs.length < 20) throw new Error('el episodio no trae subtítulos para ubicar el momento');
     const loc = await locate(subs, entry, dur, span);
     log(`🎯 ${entry.anime} ep. ${ep}: ${loc.windows.map((w) => `${Math.round(w.s)}-${Math.round(w.e)} s (${w.what})`).join(' · ')}`);
