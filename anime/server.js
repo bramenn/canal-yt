@@ -283,7 +283,8 @@ async function takenSlots() {
 }
 async function toBuffer(pj) {
   const taken = await takenSlots();
-  const posts = await scheduleInBuffer(pj, { mediaDir: MEDIA, taken }, autoLog);
+  // Buffer solo publica Shorts en YouTube: los largos van a Facebook (en YouTube se suben a mano)
+  const posts = await scheduleInBuffer(pj, { mediaDir: MEDIA, taken, only: pj.kind === 'long' ? ['facebook'] : null }, autoLog);
   pj.buffer = { at: Date.now(), posts, auto: true };
   await saveProject(pj, null, TABLE);
 }
