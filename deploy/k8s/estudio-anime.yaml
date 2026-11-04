@@ -52,8 +52,6 @@ spec:
           envFrom: [{ secretRef: { name: anime-env } }]
           env:
             - { name: AUTOPILOT, value: '1' }
-            # sesión de Antigravity (respaldo de Codex) en el disco de datos: sobrevive a los reinicios
-            - { name: AGY_HOME, value: /app/anime/projects/.agy }
             - { name: YOUTUBE_OFF, value: '1' }   # YouTube bloquea las IPs de servidor y de WARP: escenas de nyaa e imágenes
             # sin GPU (medido): modelo ligero solo para la miniatura (~8 min); las imágenes del montaje, con lanczos
             - { name: REALESRGAN_MODEL, value: realesr-animevideov3 }

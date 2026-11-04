@@ -10,9 +10,6 @@ RUN apt-get update \
 # ampliar miniaturas ×4 (misma versión que en el portátil)
 RUN curl -fsSL -o /tmp/esrgan.zip https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip \
  && mkdir -p /opt/realesrgan && unzip -q /tmp/esrgan.zip -d /opt/realesrgan && chmod +x /opt/realesrgan/realesrgan-ncnn-vulkan && rm /tmp/esrgan.zip
-# Antigravity (agy): respaldo de la IA cuando Codex se queda sin cuota (versión fija)
-RUN curl -fsSL https://github.com/google-antigravity/antigravity-cli/releases/download/1.4.12/agy_cli_linux_x64.tar.gz | tar -xz -C /usr/local/bin \
- && mv /usr/local/bin/antigravity /usr/local/bin/agy
 # tráileres de YouTube (yt-dlp) y alineación de la voz (faster-whisper)
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir faster-whisper yt-dlp
 # IA: Codex CLI (predeterminado; Claude Code queda disponible como alternativa)
