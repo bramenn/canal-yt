@@ -25,8 +25,12 @@ export function franchiseOf(name = '') {
   if (n.includes('spy x family') || n.includes('anya')) return 'Spy x Family';
   if (n.includes('blue lock')) return 'Blue Lock';
   if (n.includes('kaiju no. 8') || n.includes('kaiju 8')) return 'Kaiju No. 8';
+  if (n.includes('jojo')) return 'JoJo';
   return name.trim();
 }
+/** Franquicias gigantes: las únicas que el piloto cuenta (medido en 71 shorts: las de nicho se abandonan a la mitad). */
+export const GIANTS = new Set(['Dragon Ball', 'Naruto', 'One Piece', 'Jujutsu Kaisen', 'Demon Slayer', 'Bleach', 'Chainsaw Man', 'One Punch Man',
+  'Attack on Titan', 'Hunter x Hunter', 'My Hero Academia', 'Solo Leveling', 'Dan Da Dan', 'Frieren', 'Spy x Family', 'Blue Lock', 'Kaiju No. 8', 'JoJo']);
 
 const STORIES_SCHEMA = {
   type: 'object',
@@ -54,9 +58,12 @@ export async function findStories({ count = 3, avoid = [], recentFranchises = []
   // con título buscable gotea ~1.000 vistas al mes durante un año (Gachiakuta: solo el 11 % el primer mes)
   // medido 14-23 oct: las curiosidades de franquicias gigantes (clones de Naruto: 19.695 vistas, 77 % se queda) son los
   // virales y traen suscriptores; las noticias de nicho se quedan en ~1.000 (35-55 % se queda). Una sola noticia por tanda.
-  const timeless = count >= 2 ? count - 1 : 0;
+  // medido en 71 shorts (oct-nov): los 3 mayores éxitos son atemporales (Gojo 25.061 vistas y 93 % visto, clones de Naruto
+  // 19.952 y 99 %); el short suelto del piloto es atemporal (antes salía siempre noticia)
+  const timeless = count >= 2 ? count - 1 : 1;
+  const news = count - timeless;
   const ev = await claudeStep({
-    prompt: `Hoy es ${today}. Busca en la web (noticias de anime de los últimos 7-10 días: Anime News Network, Crunchyroll News, X/Twitter de estudios, Reddit r/anime, ComicBook, CBR, medios japoneses) y elige las ${count} historias de anime con MÁS gancho (${timeless ? `${count - timeless} noticias y ${timeless} atemporal${timeless > 1 ? 'es' : ''}` : 'noticias'}) para un short de TikTok/YouTube en español al estilo del canal AniDosis.
+    prompt: `Hoy es ${today}. Busca en la web (noticias de anime de los últimos 7-10 días: Anime News Network, Crunchyroll News, X/Twitter de estudios, Reddit r/anime, ComicBook, CBR, medios japoneses) y elige ${count === 1 ? 'la historia' : `las ${count} historias`} de anime con MÁS gancho (${[news && `${news} noticia${news > 1 ? 's' : ''}`, `${timeless} atemporal${timeless > 1 ? 'es' : ''}`].filter(Boolean).join(' y ')}) para un short de TikTok/YouTube en español al estilo del canal AniDosis.
 
 Lo que funciona en ese estilo (de sus shorts con más de 500.000 vistas): una curiosidad o polémica con un giro gracioso o sorprendente, no una noticia seca.
 - «Este anime inventó un ataque tan largo que ningún villano lo soporta»
@@ -78,8 +85,7 @@ Valen también: récords raros, polémicas de fans, decisiones absurdas de estud
 REGLA DEL ÁNGULO (medido en 37 shorts, oct-2026): elige historias que se puedan contar como CONTRASTE o PARADOJA («X hace A, pero B»: las espadas dibujan dragones de agua pero no llenan un vaso) o como VERSUS entre personajes famosos. Esos shorts retienen al 68 % y triplican vistas frente a la noticia contada tal cual (57 %). En "angle" escribe ya ese contraste.
 Evita: anuncios secos (tráiler, fecha o reparto) de animes poco conocidos (los que menos rinden y los que más se quedan en 0), rumores sin fuente, spoilers enormes sin aviso${avoid.length ? `, y estas historias ya hechas: ${avoid.slice(0, 40).join(' · ')}` : ''}.
 
-${timeless ? `NOTICIA (1, "type": "noticia"): SOLO de una franquicia gigante (nada de animes de nicho, idols, cantantes o series poco conocidas).
-ATEMPORALES (${timeless}, "type": "atemporal"): SOLO de franquicias gigantes (One Piece, Naruto, Demon Slayer, Hunter x Hunter, Jujutsu Kaisen, Bleach, Chainsaw Man, Attack on Titan…), un tema que siga interesando dentro de un año a quien lo vea por primera vez: cómo funciona un poder o técnica icónica, el secreto de una pelea memorable, qué revela un episodio clave. OBLIGATORIO: que sea un momento que se VE en un episodio concreto del anime de TV (con su "episode" y "nyaa"), porque el short se monta con las escenas de ese episodio; nada de detalles del autor o del manga que no salgan en pantalla. REGLA: el gancho y el ángulo deben girar en torno a un personaje, técnica o pelea MUY conocidos (Luffy, Naruto, Tanjiro, Gojo, Killua, Levi, Ichigo, Denji…), NUNCA centrados en el nombre propio de un personaje secundario oscuro que nadie busca (si interviene un secundario poco conocido, enfócalo desde lo que hizo el protagonista famoso, p. ej. «Luffy reveló una debilidad que nadie notó en Marineford» en vez de centrarlo en un secundario menor). Datos de fuentes fiables (wiki oficial, el propio anime o manga, entrevistas), sin spoilers del final. Ej. reales que funcionaron: «Naruto Shippuden: cómo los clones aceleraban el entrenamiento de Naruto» (9.200+ vistas en 24 h), «Demon Slayer: por qué Tanjiro no produce agua real con su espada» (6.800+ vistas), «Gachiakuta: el episodio que revela el oscuro pasado de Amo».\n` : ''}
+${timeless ? `${news ? `NOTICIA (${news}, "type": "noticia"): SOLO de una franquicia gigante (nada de animes de nicho, idols, cantantes o series poco conocidas).\n` : ''}ATEMPORALES (${timeless}, "type": "atemporal"): SOLO de franquicias gigantes (One Piece, Naruto, Demon Slayer, Hunter x Hunter, Jujutsu Kaisen, Bleach, Chainsaw Man, Attack on Titan…), un tema que siga interesando dentro de un año a quien lo vea por primera vez: cómo funciona un poder o técnica icónica, el secreto de una pelea memorable, qué revela un episodio clave. OBLIGATORIO: que sea un momento que se VE en un episodio concreto del anime de TV (con su "episode" y "nyaa"), porque el short se monta con las escenas de ese episodio; nada de detalles del autor o del manga que no salgan en pantalla. REGLA: el gancho y el ángulo deben girar en torno a un personaje, técnica o pelea MUY conocidos (Luffy, Naruto, Tanjiro, Gojo, Killua, Levi, Ichigo, Denji…), NUNCA centrados en el nombre propio de un personaje secundario oscuro que nadie busca (si interviene un secundario poco conocido, enfócalo desde lo que hizo el protagonista famoso, p. ej. «Luffy reveló una debilidad que nadie notó en Marineford» en vez de centrarlo en un secundario menor). Datos de fuentes fiables (wiki oficial, el propio anime o manga, entrevistas), sin spoilers del final. Ej. reales que funcionaron: «Naruto Shippuden: cómo los clones aceleraban el entrenamiento de Naruto» (9.200+ vistas en 24 h), «Demon Slayer: por qué Tanjiro no produce agua real con su espada» (6.800+ vistas), «Gachiakuta: el episodio que revela el oscuro pasado de Amo».\n` : ''}
 ${learn}
 
 Para cada una: "anime" (nombre del anime tal como se busca su tráiler en YouTube, en romaji o inglés), "angle" (el giro gracioso o sorprendente en una frase), "facts" (los datos concretos y verificados: nombres, cifras, fechas, qué pasó exactamente), "sources" (URLs) y "type" ("noticia" | "atemporal").
@@ -95,9 +101,11 @@ Si es "noticia": "episode" = 0 y "moment" vacío, pero si la franquicia tiene an
   const blocked = new Set(recentFranchises.map((f) => f.toLowerCase()));
   const batchFranchises = new Set();
 
+  // solo franquicias gigantes, aunque la IA proponga otra cosa
+  const giant = (s) => GIANTS.has(franchiseOf(s.anime));
   for (const s of rawList) {
     const f = franchiseOf(s.anime).toLowerCase();
-    if (!blocked.has(f) && !batchFranchises.has(f)) {
+    if (giant(s) && !blocked.has(f) && !batchFranchises.has(f)) {
       batchFranchises.add(f);
       selected.push(s);
       if (selected.length === count) break;
@@ -108,7 +116,7 @@ Si es "noticia": "episode" = 0 y "moment" vacío, pero si la franquicia tiene an
   if (selected.length < count) {
     for (const s of rawList) {
       const f = franchiseOf(s.anime).toLowerCase();
-      if (!batchFranchises.has(f)) {
+      if (giant(s) && !batchFranchises.has(f)) {
         batchFranchises.add(f);
         selected.push(s);
         if (selected.length === count) break;

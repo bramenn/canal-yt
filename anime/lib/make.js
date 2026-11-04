@@ -6,6 +6,7 @@ import { writeScript } from './story.js';
 import { montage } from './montage.js';
 import { writeCopy } from '../../lib/social.js';
 import { tightenVoice } from '../../lib/editor.js';
+import { run } from '../../lib/ytdlp.js';
 
 const KEYWORDS = 'el nombre del anime y el personaje, técnica o dato concreto que alguien buscaría: temporada, película, fecha, tráiler, personaje famoso, estudio; escrito como un titular claro y buscable, sin juegos de palabras ni nombres propios de personajes secundarios oscuros que nadie busca (si el secundario no es famoso, descríbelo por su papel junto al protagonista: «Dragon Ball: el villano que Goku mandó a la Luna» en vez de «Toninjinka»; medido: los títulos con personaje o término muy buscado como «Naruto Shippuden: cómo los clones aceleraban el entrenamiento de Naruto» o «Gachiakuta: el episodio que revela el pasado de Amo» multiplican por 4-6× las vistas y las impresiones desde búsquedas)';
 
@@ -124,6 +125,32 @@ export async function remountProject(pj, { tts, aligner, mediaDir }, log = () =>
  * Un short por puesto de un vídeo largo, con su guion y su voz ya hechos (no gasta ElevenLabs).
  * Usa los episodios que ya bajó el largo y salta los puestos que ya tienen short.
  */
+// medido en 71 shorts: los sacados del largo duraban 60-72 s y se veían al 51 %; los que se ven enteros (76-99 %) duran 38-44 s
+const MAX_SHORT = 45;
+const bare = (w) => String(w).toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '');
+
+/** Voz del puesto recortada al final de la última frase que cabe en MAX_SHORT segundos, con sus frases. */
+async function trimToShort(b, id, { tts, aligner }) {
+  const lines = b.script.lines;
+  const file = path.join(tts.AUDIO_DIR, decodeURIComponent(b.voiceUrl.replace(/^\/audio\//, '')));
+  const [al] = await aligner.align([{ index: 0, file, prompt: lines.map((l) => l.text).join(' ') }]);
+  const words = (al?.words ?? []).filter((w) => bare(w.w));
+  // fin de cada frase: su última palabra, buscada a partir de donde acabó la anterior
+  let k = 0, keep = 0, end = 0;
+  for (const [i, l] of lines.entries()) {
+    const toks = l.text.split(/\s+/).map(bare).filter(Boolean);
+    let j = words.findIndex((w, x) => x >= k + toks.length - 3 && bare(w.w) === toks.at(-1));
+    if (j < 0) j = Math.min(words.length, k + toks.length) - 1; // sin coincidencia exacta: por número de palabras
+    if (j < 0 || words[j].e > MAX_SHORT) break;
+    keep = i + 1; end = words[j].e; k = j + 1;
+  }
+  if (!keep || keep === lines.length) return { voiceUrl: b.voiceUrl, lines };
+  const dir = path.join(tts.AUDIO_DIR, id);
+  await mkdir(dir, { recursive: true });
+  await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-i', file, '-t', (end + 0.3).toFixed(2), '-c:a', 'libmp3lame', '-q:a', '2', path.join(dir, 'voz-45.mp3')], 120000);
+  return { voiceUrl: `/audio/${id}/voz-45.mp3`, lines: lines.slice(0, keep) };
+}
+
 export async function shortsFromLong(long, deps, { exists, save }, log = () => {}, signal) {
   const longDir = path.join(deps.mediaDir, long.id);
   const epFiles = (await readdir(longDir)).filter((f) => f.startsWith('ep-') && !f.endsWith('-dl'));
@@ -138,10 +165,12 @@ export async function shortsFromLong(long, deps, { exists, save }, log = () => {
     // enlaces a los episodios del largo: el montaje los encuentra sin volver a descargarlos
     for (const f of epFiles) await link(path.join(longDir, f), path.join(dir, f)).catch(() => copyFile(path.join(longDir, f), path.join(dir, f))).catch(() => {});
     const story = { anime: b.anime, nyaa: b.nyaa, episode: b.episode, moment: b.moment, angle: b.angle, facts: b.facts, sources: b.sources ?? [], type: 'atemporal', fromLong: long.id };
-    const script = { ...b.script, title: b.heading, scene_query: b.scene_query, franchise: long.plan?.main_anime };
+    const cut = await trimToShort(b, id, deps);
+    if (cut.lines.length < b.script.lines.length) log(`✂️ #${b.number}: ${cut.lines.length} de ${b.script.lines.length} frases para quedarse en ${MAX_SHORT} s`);
+    const script = { ...b.script, lines: cut.lines, title: b.heading, scene_query: b.scene_query, franchise: long.plan?.main_anime };
     script.copy = await writeCopy({ about: `${copyAbout(story, script)}\nSale del puesto #${b.number} del Top 10 «${long.plan?.title}» del canal.`, brand: '@notianimes', keywordsHint: KEYWORDS, includeComment: true }, (ev) => ev.type === 'log' && log(ev.text), () => {});
     if (script.copy?.yt_title) script.title = script.copy.yt_title;
-    const pj = { id, story, script, voice: { ...long.voice, url: b.voiceUrl }, video: `/media/${id}/short.mp4`, tiktok: null, thumb: `/media/${id}/thumb-4k.jpg`, thumbSmall: `/media/${id}/thumb.jpg`, cost: 0, created: Date.now() };
+    const pj = { id, story, script, voice: { ...long.voice, url: cut.voiceUrl }, video: `/media/${id}/short.mp4`, tiktok: null, thumb: `/media/${id}/thumb-4k.jpg`, thumbSmall: `/media/${id}/thumb.jpg`, cost: 0, created: Date.now() };
     await remountProject(pj, deps, log, signal);
     await save(pj);
     made.push(pj);

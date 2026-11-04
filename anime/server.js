@@ -11,7 +11,7 @@ import { sendJSON, readBody, sse, setEngine, getEngine } from '../lib/claude.js'
 import { migrate, listProjects, getProject, saveProject, deleteProject, q, getSetting, setSetting } from '../lib/db.js';
 import { countUsers } from '../lib/auth.js';
 import { gate, serveFrom } from '../lib/web.js';
-import { findStories, thumbText, franchiseOf } from './lib/story.js';
+import { findStories, thumbText, franchiseOf, GIANTS } from './lib/story.js';
 import { makeThumb, makeThumb16x9, firstFrame } from './lib/thumb.js';
 import { readdir, readFile, writeFile, appendFile, unlink } from 'node:fs/promises';
 import { makeShort, makeTiktok, copyAbout, remountProject, shortsFromLong } from './lib/make.js';
@@ -315,6 +315,22 @@ async function dailyShorts() {
   await autoLog(`✅ Shorts del día programados: ${today.map((x) => x.script?.title).join(' · ') || 'ninguno'}`);
 }
 const LONG_CHARS = 10000; // voz de un Top 10 (~10 min) con margen
+// el largo, de la franquicia gigante cuyos shorts rinden más en YouTube (mediana de vistas, al menos 2 shorts) y que no tuvo
+// ninguno de los dos últimos largos (medido: los 10 shorts de Death Note se quedaron en ~1.000 vistas, los de Demon Slayer 1.600-6.000)
+async function longTopic() {
+  const all = await listProjects(TABLE);
+  const lastLongs = all.filter((x) => x.kind === 'long').toSorted((a, b) => (b.created ?? 0) - (a.created ?? 0)).slice(0, 2)
+    .map((x) => franchiseOf(x.plan?.main_anime ?? x.story?.anime ?? x.script?.title ?? ''));
+  const views = new Map();
+  for (const x of all) {
+    const v = x.stats?.history?.at(-1)?.yt;
+    if (x.kind === 'long' || v == null) continue;
+    const f = franchiseOf(x.story?.anime ?? '');
+    views.set(f, [...(views.get(f) ?? []), v]);
+  }
+  const med = (a) => a.toSorted((p, q) => p - q)[a.length >> 1];
+  return [...views].filter(([f, v]) => v.length >= 2 && GIANTS.has(f) && !lastLongs.includes(f)).sort((a, b) => med(b[1]) - med(a[1]))[0]?.[0] ?? '';
+}
 async function weeklyLong() {
   const emit = (ev) => ev.type === 'log' && autoLog(ev.text);
   // sin voz suficiente no se empieza: un largo a medias gasta voz y no se publica
@@ -324,7 +340,9 @@ async function weeklyLong() {
     await autoLog(msg); await notify(msg);
     return;
   }
-  const pj = await newLong({ voice: 'hombre' }, emit, () => {}, new AbortController().signal);
+  const topic = await longTopic();
+  if (topic) await autoLog(`📊 Largo de ${topic}: la franquicia que mejor rinde en el canal`);
+  const pj = await newLong({ voice: 'hombre', topic }, emit, () => {}, new AbortController().signal);
   if (publishable(pj)) await toBuffer(pj); else await autoLog(`⚠️ Largo «${pj.script?.title}» no pasó la revisión: no se publica`);
   await shortsFromLong(pj, { tts, aligner, mediaDir: MEDIA }, { exists: async (id) => !!(await getProject(id, TABLE)), save: (x) => saveProject(x, null, TABLE) }, autoLog);
   await autoLog(`✅ Largo listo: ${pj.script?.title}`);
