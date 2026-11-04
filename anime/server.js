@@ -305,8 +305,12 @@ async function dailyShorts() {
   for (const x of pool) if (picked.length < need - 1 && !picked.some((p) => p.story.fromLong === x.story.fromLong)) picked.push(x); // de largos distintos si se puede
   for (const x of pool) if (picked.length < need - 1 && !picked.includes(x)) picked.push(x);
   // sin versión TikTok: dobla la voz de ElevenLabs y la de YouTube ya sirve para TikTok; si no hay largos de donde sacar, más nuevos
-  const fresh = (await autoShorts({ count: need - picked.length, voice: 'hombre', tiktok: false }, emit, () => {}, signal)).projects ?? [];
-  const today = [...fresh.filter(publishable), ...picked];
+  let fresh = [];
+  try { fresh = ((await autoShorts({ count: need - picked.length, voice: 'hombre', tiktok: false }, emit, () => {}, signal)).projects ?? []).filter(publishable); }
+  catch (e) { await autoLog(`⚠️ Short nuevo: ${e.message}`); }
+  // sin short nuevo (IA sin cuota, voz agotada…) los huecos se llenan igual con los de los largos, que ya están hechos
+  for (const x of pool) if (fresh.length + picked.length < need && !picked.includes(x)) picked.push(x);
+  const today = [...fresh, ...picked];
   for (const pj of today) await toBuffer(pj).catch((e) => autoLog(`⚠️ Buffer «${pj.script?.title}»: ${e.message}`));
   await autoLog(`✅ Shorts del día programados: ${today.map((x) => x.script?.title).join(' · ') || 'ninguno'}`);
 }
