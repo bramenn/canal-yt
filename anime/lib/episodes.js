@@ -48,7 +48,8 @@ async function rss(q) {
   const xml = await (await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(20000) })).text();
   const tag = (it, t) => it.match(new RegExp(`<${t}>([^<]*)</${t}>`))?.[1] ?? '';
   return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(([, it]) => ({
-    title: tag(it, 'title').replace(/&amp;/g, '&').replace(/&#34;/g, '"'),
+    // nyaa escapa el apóstrofo («JoJo&#39;s»): sin decodificar, «jojo39s» ya no coincide con el nombre
+    title: tag(it, 'title').replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'),
     link: tag(it, 'link'),
     seeders: +tag(it, 'nyaa:seeders') || 0,
   })).filter((x) => x.link && x.seeders > 0);
@@ -191,7 +192,10 @@ export function packFile(files, ep, season = 0) {
     if (abs) return abs;
     return serie.filter(sxe).toSorted((a, b) => { const x = sxe(a), y = sxe(b); return x[1] - y[1] || x[2] - y[2]; })[ep - 1];
   }
-  const inSeason = (f) => season <= 1 || new RegExp(`\\b(?:Season\\s*|S)0*${season}\\b`, 'i').test(f.path);
+  // un archivo marcado con otra temporada o parte («Part 6 - Stone Ocean - 11») no es de la pedida; sin temporada pedida
+  // (numeración absoluta, repartida en carpetas «Season N») no se filtra
+  const marksOf = (f) => [...inner(f).matchAll(/\b(?:Season|Part|S)\s*0*(\d{1,2})\b(?!\s?E\d)/gi)].map((m) => +m[1]);
+  const inSeason = (f) => !season || !marksOf(f).length || marksOf(f).includes(season);
   // el número del episodio es el primero del nombre (sin contar «Part 6», «Season 2», «(2012)» ni las etiquetas [..]): un «1000»
   // en el título del episodio 60 no cuenta
   const first = (n) => +(n.replace(/\[[^\]]*\]|\([^)]*\)/g, ' ').replace(/\b(?:part|season|cour|vol(?:ume)?|s)\s*\d+/gi, ' ').match(/(?<![a-z\d])\d{1,4}(?!\d)/i)?.[0] ?? NaN);
