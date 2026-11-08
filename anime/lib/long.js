@@ -17,7 +17,7 @@ import { writeCopy } from '../../lib/social.js';
 import { upscaleImage } from '../../lib/upscale.js';
 import { trailer, newsImages, catalogImages, lineTimes, BRAND } from './montage.js';
 import { makeThumb16x9 } from './thumb.js';
-import { episodeScenes } from './episodes.js';
+import { episodeScenes, torrentsFor } from './episodes.js';
 
 const LW = 1920, LH = 1080, FPS = 30, CARD_DUR = 2.0;
 // sin capítulos ni pistas de datos: los .mkv traen capítulos que en .mp4 son una pista de texto, y piezas con y sin
@@ -86,7 +86,7 @@ Devuelve:
   - "number": el puesto (10, 9, 8 … 1),
   - "heading": título corto del capítulo (3-6 palabras, sin poner el número delante),
   - "anime": nombre oficial del anime de ese puesto,
-  - "nyaa": título en rōmaji tal como lo nombran los releases de fansubs en nyaa.si, CON la temporada si sus episodios se numeran por temporada (p. ej. "Kimetsu no Yaiba", "Jujutsu Kaisen", "Shingeki no Kyojin S3", "Boku no Hero Academia", "One Piece", "Naruto Shippuuden", "Hunter x Hunter (2011)"),
+  - "nyaa": título en rōmaji tal como lo nombran los releases de fansubs en nyaa.si, CON la temporada si sus episodios se numeran por temporada (p. ej. "Kimetsu no Yaiba", "Jujutsu Kaisen", "Shingeki no Kyojin S3", "Boku no Hero Academia", "One Piece", "Naruto Shippuuden", "Hunter x Hunter (2011)"); en franquicias divididas en partes con nombre propio, SIEMPRE el nombre de la parte y su numeración desde el 1 (JoJo: "JoJo no Kimyou na Bouken: Diamond wa Kudakenai", ep. 1-39; Stardust Crusaders es UNA sola parte de 48 episodios, sin separar «Egypt Hen»), nunca el nombre genérico de la franquicia,
   - "episode": número de episodio donde ocurre el momento, numerado como en esos releases (One Piece y Naruto: absoluto; series por temporadas: dentro de la temporada indicada en "nyaa"),
   - "moment": qué pasa exactamente en pantalla en ese episodio, en inglés y con los nombres que salen en los subtítulos en inglés (p. ej. "Tanjiro uses Hinokami Kagura with Nezuko's Blood Demon Art to cut Rui's threads"),
   - "scene_query": búsqueda concreta en inglés para encontrar en YouTube el clip o escena exacta de ese capítulo (p. ej. "Goku feet Kamehameha vs Piccolo", "Rock Lee drops weights vs Gaara", "Gojo Hollow Purple Toji"),
@@ -700,6 +700,15 @@ export async function makeLong({ id, topic = '', voiceId, learn = '', avoid = []
   log(`📋 «${plan.title}» · Top 10: ${plan.chapters.map((c) => `#${c.number} ${c.anime} ep. ${c.episode}`).join(' · ')}`);
   const blocks = draft ? await realign(draft.blocks, deps, log, signal) : [];
   if (blocks.length) log(`♻️ Retomo con ${blocks.length} bloques ya escritos y locutados`);
+  // antes de gastar voz: si la mayoría de sus episodios no están en nyaa, el largo saldría con tráileres y tomas repetidas
+  // (JoJo, 6-nov: 9 de 10 sin episodio → más de 100 repeticiones y no se publicó). Uno a uno para no saturar nyaa.
+  if (!draft) {
+    let ok = 0;
+    const chs = plan.chapters.filter((c) => c.episode > 0);
+    for (const c of chs) if ((await torrentsFor(c).catch(() => [])).length) ok++;
+    log(`🔎 Episodios en nyaa: ${ok} de ${chs.length}`);
+    if (chs.length && ok < Math.ceil(chs.length * 0.7)) throw new Error(`PLAN_SIN_EPISODIOS: solo ${ok} de ${chs.length} episodios están en nyaa`);
+  }
   // tras cada bloque: si se corta la red o falta espacio, se retoma desde aquí sin volver a pagar voces
   const save = () => saveDraft({ id, plan, blocks, voiceId, cost }, deps.mediaDir);
   // al reanudar no se reescribe: un borrador más nuevo que el montaje obligaría a montar otra vez

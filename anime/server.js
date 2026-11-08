@@ -299,17 +299,25 @@ async function dailyShorts() {
   const need = DAILY - booked;
   if (need <= 0) return autoLog(`✅ Hoy ya hay ${booked} shorts programados: no hace falta ninguno`);
   // 1 nuevo (la noticia del día) y el resto de los largos aún sin programar, los más antiguos primero
-  const pool = all.filter((x) => x.story?.fromLong && !x.buffer && publishable(x) && Date.now() - (x.created ?? 0) < 30 * 864e5)
+  // de la reserva, solo franquicias gigantes (los 11 shorts de Death Note se vieron poco y parecían repetidos)
+  const pool = all.filter((x) => x.story?.fromLong && !x.buffer && publishable(x) && GIANTS.has(franchiseOf(x.story.anime)) && Date.now() - (x.created ?? 0) < 30 * 864e5)
     .sort((a, b) => (a.created ?? 0) - (b.created ?? 0));
   const picked = [];
-  for (const x of pool) if (picked.length < need - 1 && !picked.some((p) => p.story.fromLong === x.story.fromLong)) picked.push(x); // de largos distintos si se puede
-  for (const x of pool) if (picked.length < need - 1 && !picked.includes(x)) picked.push(x);
+  // como mucho uno por largo al día: dos del mismo largo cada día durante una semana parecía el mismo vídeo repetido
+  const otherLong = (x) => !picked.some((p) => p.story.fromLong === x.story.fromLong);
+  for (const x of pool) if (picked.length < need - 1 && otherLong(x)) picked.push(x);
   // sin versión TikTok: dobla la voz de ElevenLabs y la de YouTube ya sirve para TikTok; si no hay largos de donde sacar, más nuevos
+  // la voz que queda se reparte hasta que ElevenLabs renueve: mejor 1-2 shorts todos los días que 3 y luego una semana sin nada
+  const u = await import('../lib/tts/elevenlabs.js').then((m) => m.usage()).catch(() => null);
+  const daysLeft = u ? Math.max(1, Math.ceil((u.reset * 1000 - Date.now()) / 864e5)) : 1;
+  const perDay = u ? Math.floor((u.limit - u.used) / daysLeft / 900) : Infinity; // ~900 caracteres por short nuevo
+  const newCount = Math.min(need - picked.length, perDay);
+  if (newCount < need - picked.length) await autoLog(`🎙 Quedan ${u.limit - u.used} caracteres de voz para ${daysLeft} días: hoy ${newCount} short(s) nuevo(s)`);
   let fresh = [];
-  try { fresh = ((await autoShorts({ count: need - picked.length, voice: 'hombre', tiktok: false }, emit, () => {}, signal)).projects ?? []).filter(publishable); }
+  if (newCount > 0) try { fresh = ((await autoShorts({ count: newCount, voice: 'hombre', tiktok: false }, emit, () => {}, signal)).projects ?? []).filter(publishable); }
   catch (e) { await autoLog(`⚠️ Short nuevo: ${e.message}`); }
   // sin short nuevo (IA sin cuota, voz agotada…) los huecos se llenan igual con los de los largos, que ya están hechos
-  for (const x of pool) if (fresh.length + picked.length < need && !picked.includes(x)) picked.push(x);
+  for (const x of pool) if (fresh.length + picked.length < need && otherLong(x)) picked.push(x);
   const today = [...fresh, ...picked];
   for (const pj of today) await toBuffer(pj).catch((e) => autoLog(`⚠️ Buffer «${pj.script?.title}»: ${e.message}`));
   await autoLog(`✅ Shorts del día programados: ${today.map((x) => x.script?.title).join(' · ') || 'ninguno'}`);
@@ -317,7 +325,7 @@ async function dailyShorts() {
 const LONG_CHARS = 10000; // voz de un Top 10 (~10 min) con margen
 // el largo, de la franquicia gigante cuyos shorts rinden más en YouTube (mediana de vistas, al menos 2 shorts) y que no tuvo
 // ninguno de los dos últimos largos (medido: los 10 shorts de Death Note se quedaron en ~1.000 vistas, los de Demon Slayer 1.600-6.000)
-async function longTopic() {
+async function longTopics() {
   const all = await listProjects(TABLE);
   const lastLongs = all.filter((x) => x.kind === 'long').toSorted((a, b) => (b.created ?? 0) - (a.created ?? 0)).slice(0, 2)
     .map((x) => franchiseOf(x.plan?.main_anime ?? x.story?.anime ?? x.script?.title ?? ''));
@@ -329,7 +337,7 @@ async function longTopic() {
     views.set(f, [...(views.get(f) ?? []), v]);
   }
   const med = (a) => a.toSorted((p, q) => p - q)[a.length >> 1];
-  return [...views].filter(([f, v]) => v.length >= 2 && GIANTS.has(f) && !lastLongs.includes(f)).sort((a, b) => med(b[1]) - med(a[1]))[0]?.[0] ?? '';
+  return [...views].filter(([f, v]) => v.length >= 2 && GIANTS.has(f) && !lastLongs.includes(f)).sort((a, b) => med(b[1]) - med(a[1])).map(([f]) => f);
 }
 async function weeklyLong() {
   const emit = (ev) => ev.type === 'log' && autoLog(ev.text);
@@ -340,9 +348,15 @@ async function weeklyLong() {
     await autoLog(msg); await notify(msg);
     return;
   }
-  const topic = await longTopic();
-  if (topic) await autoLog(`📊 Largo de ${topic}: la franquicia que mejor rinde en el canal`);
-  const pj = await newLong({ voice: 'hombre', topic }, emit, () => {}, new AbortController().signal);
+  // la mejor franquicia cuyos episodios estén en nyaa: si el plan no los encuentra, la siguiente (sin gastar voz)
+  const topics = (await longTopics()).slice(0, 3);
+  let pj = null;
+  for (const topic of topics.length ? topics : ['']) {
+    if (topic) await autoLog(`📊 Largo de ${topic}: la franquicia que mejor rinde en el canal`);
+    try { pj = await newLong({ voice: 'hombre', topic }, emit, () => {}, new AbortController().signal); break; }
+    catch (e) { if (!/PLAN_SIN_EPISODIOS/.test(e.message)) throw e; await autoLog(`⚠️ ${topic || 'Largo'}: ${e.message.replace('PLAN_SIN_EPISODIOS: ', '')}; pruebo otra franquicia`); }
+  }
+  if (!pj) return autoLog('❌ Ninguna franquicia tenía sus episodios en nyaa: hoy no hay largo');
   if (publishable(pj)) await toBuffer(pj); else await autoLog(`⚠️ Largo «${pj.script?.title}» no pasó la revisión: no se publica`);
   await shortsFromLong(pj, { tts, aligner, mediaDir: MEDIA }, { exists: async (id) => !!(await getProject(id, TABLE)), save: (x) => saveProject(x, null, TABLE) }, autoLog);
   await autoLog(`✅ Largo listo: ${pj.script?.title}`);

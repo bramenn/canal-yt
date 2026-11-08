@@ -56,10 +56,32 @@ async function rss(q) {
 
 /** Qué es un resultado de nyaa para el episodio pedido: null (no sirve), suelto o pack (y en qué temporada buscar dentro).
  * own: buscado con el nombre que ya lleva la temporada (o sin temporada); si no, con el nombre general de la serie. */
+const words = (t) => String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
+/** ¿Están las palabras del nombre, en orden, empezando por la primera? («JoJo no Kimyou na Bouken Part 4: Diamond wa Kudakenai») */
+const inOrder = (title, name) => {
+  const t = words(title.replace(/^(\[[^\]]*\]\s*)+/, '')), n = words(name);
+  if (!n.length || t[0] !== n[0]) return false;
+  let i = 0;
+  for (const w of t) if (w === n[i]) i++;
+  return i === n.length;
+};
+// palabras de un release que pueden seguir al nombre de la serie («Naruto Complete», «Bleach (2004) Season 1»); cualquier otra
+// palabra es otra serie con el mismo comienzo («Naruto Shippuden», «Dragon Ball Super», «Bleach Sennen Kessen-hen»)
+const RELEASE = new Set(['complete', 'completa', 'series', 'season', 'seasons', 'part', 'parte', 'cour', 'batch', 'bd', 'bdrip', 'blu', 'bluray',
+  'tv', 'collection', 'the', 'remastered', 'uncut', 'dual', 'audio', 'multi', 'eng', 'sub', 'dub', 'web', 'webrip', 'hevc', 'x265', 'x264', 'av1',
+  'v2', 'v3', 'episode', 'episodes', 'ep', 'eps', 'vol', 'volume', 'box', 'set', 'tvrip', 'dvd', 'dvdrip', 'hd', 'fhd', 'uhd', 'ova', 'ovas', 'specials', 'movies']);
+const sameSeries = (title, name) => {
+  const t = words(title.replace(/^(\[[^\]]*\]\s*)+/, '')), n = words(name);
+  if (n.some((w, i) => t[i] !== w)) return true; // no empieza igual: lo decide inOrder
+  const next = t[n.length];
+  return !next || /\d/.test(next) || RELEASE.has(next) || /^s\d/.test(next);
+};
 export function classify(title, name, ep, season = 0, own = true) {
   const bare = norm(title.replace(/^(\[[^\]]*\]\s*)+/, ''));
-  // «[Grupo] Nombre - 24 (1080p)»: el nombre delante, para no confundir Naruto con Boruto - Naruto…
-  if (!bare.startsWith(norm(name))) return null;
+  // «[Grupo] Nombre - 24 (1080p)»: el nombre delante, para no confundir Naruto con Boruto - Naruto…; los packs con nombres
+  // más sueltos («Part 4:», «(2012) - Season 3 (S03) -») valen si traen sus palabras en orden empezando por la primera
+  if (!bare.startsWith(norm(name)) && !(words(name).length >= 3 && inOrder(title, name))) return null;
+  if (!sameSeries(title, name)) return null;
   const s = season || 1, batch = /batch|complete/i.test(title);
   // «Attack on Titan S03E19 (56)»: suelto si es justo esa temporada y episodio
   if (/\bS\d{1,2}\s?E\d{1,4}\b/i.test(title)) {
@@ -67,26 +89,38 @@ export function classify(title, name, ep, season = 0, own = true) {
   }
   // «(Season 1)» o «S01-S04»: si dice de qué temporadas es y la pedida no está, no sirve
   const marks = [...title.matchAll(/\b(?:S|Season\s*)0*(\d{1,2})(?:\s*[-~]\s*(?:S|Season\s*)?0*(\d{1,2}))?\b(?!\s?E\d)/gi)];
-  if (marks.length && !marks.some((m) => s >= +m[1] && s <= +(m[2] ?? m[1]))) return null;
+  if (season && marks.length && !marks.some((m) => s >= +m[1] && s <= +(m[2] ?? m[1]))) return null;
   // «Nombre - 05»: suelto solo con el nombre de la temporada; con el general sería el de la temporada 1
   if ((own || s === 1) && epRe(ep).test(title) && !RANGE.test(title) && !batch
     && [String(ep), pad(ep), String(ep).padStart(3, '0')].some((n) => bare.startsWith(norm(name) + n))) return { pack: false, packSeason: 0 };
   const packSeason = own ? 0 : season; // un pack con el nombre de la temporada ya es de esa temporada
   const r = title.match(RANGE);
   if (r) return +r[1] <= ep && ep <= +r[2] && !/\b(19|20)\d\d\b/.test(r[0]) ? { pack: true, packSeason } : null;
+  // sin temporada pedida, un pack «Season 3 (S03)» de una serie que numera por partes (JoJo): dentro se busca por orden
+  if (!season && marks.length) return { pack: true, packSeason: 0 };
   // «Shingeki no Kyojin S1 (BD 1080p)»: pack de esa temporada
   if (new RegExp(`(?:\\bS|\\bSeason\\s*)0*${s}\\b(?!\\s?E\\d)`, 'i').test(title)) return { pack: true, packSeason: 0 };
   return batch ? { pack: true, packSeason } : null;
 }
 
+/** Torrents del episodio de una entrada ({ nyaa, anime, episode }) buscando con todos sus nombres: el de nyaa, el general sin
+ * temporada y el de la serie. */
+export const torrentsFor = (entry) => {
+  const name = entry.nyaa || entry.anime;
+  return findTorrents([...new Set([name, baseName(name), entry.anime])].filter(Boolean), Math.round(+entry.episode), seasonOf(name));
+};
+
 /** Torrents con ese episodio, de mejor a peor, buscando con todos los nombres de la serie (el primero, el que trae la
  * temporada). Pesan los seeders, 1080p y los grupos fiables; un pack algo menos que un suelto (se baja solo ese archivo). */
 export async function findTorrents(names, ep, season = 0) {
-  const score = (x) => x.seeders * (/1080p/i.test(x.title) ? 3 : /720p/i.test(x.title) ? 1.5 : 1) * (TRUSTED.test(x.title) ? 2 : 1) * (x.pack ? 0.5 : 1);
+  // doblajes o subtítulos solo en otro idioma (alemán, francés…) no sirven: el momento se busca con subtítulos en inglés
+  const foreign = (t) => /\b(german|deutsch|vostfr|french|italian|ita|castellano|latino|russian|rus)\b/i.test(t) && !/\beng|multi(?:ple)?[ -]?sub/i.test(t);
+  const score = (x) => x.seeders * (/1080p/i.test(x.title) ? 3 : /720p/i.test(x.title) ? 1.5 : 1) * (TRUSTED.test(x.title) ? 2 : 1) * (x.pack ? 0.5 : 1) * (foreign(x.title) ? 0.05 : 1);
   const found = new Map();
   for (const [i, name] of names.entries()) {
     const sx = `S${pad(season || 1)}E${pad(ep)}`;
-    for (const q of [`${name} ${pad(ep)} 1080p`, `${name} ${pad(ep)}`, `${name} ${sx}`, `${name} S${season || 1}`, `${name} batch`, `${name} complete`]) {
+    // la última, solo el nombre: los packs con rango («01 ~ 39») no aparecen buscando un número de episodio
+    for (const q of [`${name} ${pad(ep)} 1080p`, `${name} ${pad(ep)}`, `${name} ${sx}`, `${name} S${season || 1}`, `${name} batch`, `${name} complete`, name]) {
       const items = await rss(q).catch(async () => { await waitReady('/'); return rss(q).catch(() => []); });
       for (const x of items) {
         const c = !found.has(x.link) && classify(x.title, name, ep, season, i === 0);
@@ -143,11 +177,27 @@ async function download(t, ep, dl, log, season = 0) {
 /** Archivo del episodio dentro de un pack. Con varias temporadas, el de la pedida (sin temporada: la 1); si no está, ninguno. */
 export function packFile(files, ep, season = 0) {
   const sxe = (f) => f.name.match(/\bS(\d{1,2})\s?E(\d{1,4})\b/i);
-  if (files.some(sxe)) return files.find((f) => { const m = sxe(f); return +m?.[1] === (season || 1) && +m[2] === ep; });
-  const inSeason = (f) => season <= 1 || new RegExp(`\\b(?:Season\\s*|S)0*${season}\\b`, 'i').test(f.path);
-  // los packs completos traen OVAs, películas y spin-offs («Junior High - 05»): solo la serie
+  // los packs completos traen OVAs, películas y spin-offs («Junior High - 05»): solo la serie. Se mira DENTRO del torrent:
+  // la carpeta raíz «Naruto Complete (001-220 + Movies)» no convierte cada episodio en película
   const extra = /\b(OVA|OAD|ONA|Movies?|Film|Specials?|Junior High|Picture Drama|Chibi)\b/i;
-  return files.find((f) => inSeason(f) && !extra.test(f.path) && epRe(ep).test(f.name.replace(/\.(mkv|mp4)$/i, ' ')));
+  const inner = (f) => { const p = f.path.replace(/^\.\//, '').split('/'); return p.length > 1 ? p.slice(1).join('/') : p[0]; };
+  const serie = files.filter((f) => !extra.test(inner(f)));
+  if (serie.some(sxe)) {
+    const exact = serie.find((f) => { const m = sxe(f); return +m?.[1] === (season || 1) && +m[2] === ep; });
+    if (exact || season) return exact;
+    // sin temporada pedida, el número es absoluto: «S05E17 (202)» lo dice entre paréntesis; si no, va por orden dentro del pack
+    // (cada parte de JoJo empieza en el 1)
+    const abs = serie.find((f) => new RegExp(`\\bS\\d{1,2}\\s?E\\d{1,4}\\s*\\(0*${ep}\\)`, 'i').test(f.name));
+    if (abs) return abs;
+    return serie.filter(sxe).toSorted((a, b) => { const x = sxe(a), y = sxe(b); return x[1] - y[1] || x[2] - y[2]; })[ep - 1];
+  }
+  const inSeason = (f) => season <= 1 || new RegExp(`\\b(?:Season\\s*|S)0*${season}\\b`, 'i').test(f.path);
+  // el número del episodio es el primero del nombre (sin contar «Part 6», «Season 2», «(2012)» ni las etiquetas [..]): un «1000»
+  // en el título del episodio 60 no cuenta
+  const first = (n) => +(n.replace(/\[[^\]]*\]|\([^)]*\)/g, ' ').replace(/\b(?:part|season|cour|vol(?:ume)?|s)\s*\d+/gi, ' ').match(/(?<![a-z\d])\d{1,4}(?!\d)/i)?.[0] ?? NaN);
+  const hits = serie.filter((f) => inSeason(f) && first(f.name) === ep);
+  // varias partes con ese mismo número y sin temporada pedida: no se adivina (pasa al siguiente torrent)
+  return hits.length === 1 || season > 1 ? hits[0] : undefined;
 }
 
 /** Subtítulos en inglés del mkv como [{ s, e, text }]. */
@@ -252,9 +302,8 @@ async function scenesFor(entry, dir, log, context = '', span = '200-320') {
   const slug = `ep-${norm(entry.nyaa || entry.anime).slice(0, 30)}-${ep}`;
   const cache = path.join(dir, `${slug}.json`);
   if (existsSync(cache)) return JSON.parse(await readFile(cache, 'utf8'));
-  const name = entry.nyaa || entry.anime, season = seasonOf(name);
-  // sin releases con ese nombre: el nombre general (sin temporada) o el de la serie; desde la temporada 2, solo packs
-  const cands = await findTorrents([...new Set([name, baseName(name), entry.anime])].filter(Boolean), ep, season);
+  const name = entry.nyaa || entry.anime;
+  const cands = await torrentsFor(entry);
   if (!cands.length) throw new Error(`no está en nyaa (${name} ${ep})`);
   // de mejor a peor: si uno no baja (pocos seeders) o el pack no trae el episodio, el siguiente; cada uno en su carpeta para retomarlo
   let file, dl, last;
